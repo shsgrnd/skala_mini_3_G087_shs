@@ -4,8 +4,9 @@
 의존성을 SupervisorDeps 하나에 명시적으로 담아 functools.partial로 각 노드에 주입한다.
 파일을 어디로 옮겨도, 단위 테스트에서 mock deps로 갈아 끼워도 동작이 같다.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
+from .config import AgentConfig, load_config
 
 
 @dataclass
@@ -15,3 +16,5 @@ class SupervisorDeps:
     mcp: Any             # Wave 2  — MCP stdio 클라이언트 (Tool/Resource/Prompt)
     session_store: Any   # Wave 12 — SQLite 세션 저장소
     version: str         # Wave 14 — SUPERVISOR_VERSION (v1/v2)
+
+    config: AgentConfig = field(default_factory=load_config)

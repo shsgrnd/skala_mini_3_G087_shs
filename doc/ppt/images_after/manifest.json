@@ -1,0 +1,31 @@
+{
+  "backend": "fake",
+  "mode": "strict",
+  "supervisor": "v2",
+  "fixed_monitoring": true,
+  "sqlite": "temporary",
+  "url": "http://127.0.0.1:8601",
+  "image_format": "JPEG",
+  "image_size": [
+    1512,
+    682
+  ],
+  "note": "Original UI fake 실모델 text is misleading; these are fake screenshots.",
+  "screenshots": [
+    {
+      "file": "s1_unknown_target.jpg",
+      "query": "billing-service 장애 진단",
+      "sha256": "ca292f51c1bab08e110dfd23017f038165186c5ba53c3871e9f0a72b901bdd01"
+    },
+    {
+      "file": "s1_missing_target.jpg",
+      "query": "로그인 응답이 느려요",
+      "sha256": "9d5ba8794c0dd5ac1fa63ade01937a3acf74e5c4eda8dfb736d0664a004bc2ec"
+    },
+    {
+      "file": "s1_incident_cpu.jpg",
+      "query": "payments-service CPU 급증 장애 진단",
+      "sha256": "69c804b7e7b23437b2784b11a136a74f843de290a63b516758bec9e7ee83cf59"
+    }
+  ]
+}

@@ -7,11 +7,14 @@
 import re
 
 from langsmith import traceable
+from .config import load_config
+from .target_resolver import resolve_targets, guard_monitoring_tasks, empty_plan
 
 
 class FakeLLM:
     def __init__(self, name: str, usd_per_1k_tokens: float):
         self.name = name
+        self.config = load_config()
         self.usd_per_1k = usd_per_1k_tokens
 
     def _usage(self, prompt: str, completion: str) -> dict:
@@ -37,7 +40,9 @@ class FastLLM(FakeLLM):
         Wave 6 재현: needs_analysis=False라고 스스로 판단해 놓고도 analysis task를
         끼워 넣는 '모델의 자기모순'을 결정론적으로 재현한다 → gate 노드가 걸러낸다.
         """
-        systems = re.findall(r"[a-z][a-z0-9-]+-(?:service|\d+)", query) or ["auth-service"]
+        if self.config.target_resolution_mode == 'strict' and resolve_targets(query)['status'] != 'resolved':
+            return empty_plan(self.name)
+        systems = re.findall(r"[a-z][a-z0-9-]+-(?:service|\d+)", query) or [self.config.legacy_target]
         if "web-01" not in systems:
             systems.append("web-01")   # 연관 시스템 비교 조회 → Wave 10b 병렬 실행 대상
         tasks = [
@@ -47,6 +52,8 @@ class FastLLM(FakeLLM):
         ]
         tasks.append({"id": "task-analysis", "agent": "analysis",
                       "kind": "pattern-analysis", "status": "pending"})   # 자기모순 task
+        if self.config.target_resolution_mode == 'strict':
+            tasks = guard_monitoring_tasks(tasks, resolve_targets(query)['targets'])
         result = {"needs_analysis": False, "tasks": tasks}
         return result, self._usage(query + procedure_prompt, str(result))
 

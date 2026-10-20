@@ -25,3 +25,5 @@ artifacts/
 /AGENTS.md
 pytest.ini
 requirements-dev.txt
+!/tests/test_config.py
+!/tests/test_target_resolution.py

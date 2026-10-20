@@ -23,6 +23,7 @@ from langsmith.run_helpers import get_current_run_tree
 from pydantic import BaseModel
 
 from agent.deps import SupervisorDeps
+from agent.config import load_config
 from agent.fake_llm import FastLLM, QualityLLM
 from agent.graph import build_graph
 from agent.mcp_client import MCPClient
@@ -62,6 +63,10 @@ def _build_llms():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global CREATION_COUNT
+    config = load_config()
+    supervisor_version = os.environ.get('SUPERVISOR_VERSION', 'v2')
+    if config.target_resolution_mode == 'strict' and supervisor_version != 'v2':
+        raise ValueError('TARGET_RESOLUTION_MODE=strict requires SUPERVISOR_VERSION=v2')
     CREATION_COUNT += 1
     mcp = MCPClient()
     await mcp.start()   # Wave 2 — MCP subprocess는 서버 수명 동안 딱 1개
@@ -72,7 +77,8 @@ async def lifespan(app: FastAPI):
         quality_llm=quality_llm,
         mcp=mcp,
         session_store=SqliteSessionStore(),
-        version=os.environ.get("SUPERVISOR_VERSION", "v2"),
+        version=supervisor_version,
+        config=config,
     )
     app.state.deps = deps
     app.state.graph = build_graph(deps) if deps.version == "v2" else None
@@ -96,6 +102,8 @@ async def health():
             "creation_count": CREATION_COUNT,
             "supervisor_version": app.state.deps.version,
             "llm_backend": app.state.llm_backend,
+            "target_resolution_mode": app.state.deps.config.target_resolution_mode,
+            "config_sha256": app.state.deps.config.sha256,
             "fast_llm": app.state.deps.fast_llm.name,
             "quality_llm": app.state.deps.quality_llm.name}
 
@@ -108,6 +116,9 @@ async def version():
 def _metadata(result: dict, run_id: str | None) -> dict:
     return {
         "route": result.get("route"),
+        "target_resolution_mode": app.state.deps.config.target_resolution_mode,
+        "target_resolution": result.get('target_resolution'),
+        "config_sha256": app.state.deps.config.sha256,
         "task_count": len(result.get("tasks", [])),
         "gate_removed": result.get("gate_removed", 0),
         "replan_rounds": result.get("replan_rounds", 0),
@@ -184,6 +195,8 @@ async def chat_stream(message: str, thread_id: str = "default"):
                         final = delta["final"]
                     if delta.get("last_prompt"):
                         last_prompt = delta["last_prompt"]
+            if deps.config.target_resolution_mode == 'strict':
+                last_prompt = None
             yield f"data: {json.dumps({'type': 'FinalAnswer', 'reply': final, 'prompt': last_prompt}, ensure_ascii=False)}\n\n"
             deps.session_store.append(thread_id, "user", message)
             deps.session_store.append(thread_id, "assistant", final)

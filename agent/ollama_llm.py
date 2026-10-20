@@ -12,47 +12,24 @@ fc
 """
 import json
 import re
-from pathlib import Path
 
 import httpx
 from langsmith import traceable
+from .config import load_config, load_known_systems
+from .target_resolver import guess_target, guess_targets, guard_monitoring_tasks, resolve_targets, empty_plan
 
 OLLAMA_URL = "http://127.0.0.1:11434/api/chat"
 
 
-def _load_known_systems() -> set[str]:
-    """KNOWN_SYSTEMS를 data/monitoring.json의 실제 시스템 키들로 동적으로 맞춘다 —
-    하드코딩된 2개짜리 목록이 모니터링 데이터와 어긋나던 문제(payments/cache/gateway/
-    log-service 미인식) 수정."""
-    path = Path(__file__).resolve().parent.parent / "data" / "monitoring.json"
-    try:
-        return set(json.loads(path.read_text()).keys())
-    except (OSError, json.JSONDecodeError):
-        return {"auth-service", "web-01"}
+KNOWN_SYSTEMS = set(load_known_systems())
 
 
-KNOWN_SYSTEMS = _load_known_systems()
-
-
-def _guess_target(query: str) -> str:
-    """plan()의 코드 레벨 정규화에서 쓰는 안전망 — 소형 모델(fast_llm, 이전 기본값
-    qwen2.5:0.5b에서 실측된 사례)이 target을
-    아예 안 내놓거나(예: agent=analysis만 던지고 research task를 하나도 안 만듦) 오타
-    (예: "payment_service")를 내놓으면, 하드코딩된 "auth-service"로 덮어쓰는 대신
-    KNOWN_SYSTEMS 멤버십 매칭으로 쿼리에서 실제 시스템명을 다시 찾는다(W6 정신:
-    모델 출력을 그대로 믿지 않고 코드가 보정). 아무것도 안 걸리면 auth-service로 폴백."""
-    matches = [(query.index(s), s) for s in KNOWN_SYSTEMS if s in query]
-    return min(matches)[1] if matches else "auth-service"
+def _guess_target(query: str):
+    return guess_target(query)
 
 
 def _guess_targets(query: str) -> list[str]:
-    """research task가 통째로 0개일 때(모델이 agent=analysis만 던지는 등 계획 자체가
-    붕괴됐을 때) 쓰는 복구용 — _guess_target처럼 하나만 고르면 쿼리에 언급된 다른
-    시스템이 조사에서 통째로 빠지고, write 단계가 그 빈 자리를 수치까지 지어내서
-    채우는 할루시네이션으로 이어진다(실측 사례: cache-service 미조사 → "CPU 53.5%"
-    조작). 쿼리에 등장하는 KNOWN_SYSTEMS 전부를 복구한다."""
-    matched = sorted(s for s in KNOWN_SYSTEMS if s in query)
-    return matched or ["auth-service"]
+    return guess_targets(query)
 
 
 ROUTE_SCHEMA = {
@@ -89,6 +66,7 @@ class OllamaLLM:
     def __init__(self, model: str, usd_per_1k_tokens: float):
         self.name = f"ollama:{model}"
         self.model = model
+        self.config = load_config()
         self.usd_per_1k = usd_per_1k_tokens
 
     def _chat(self, system: str, user: str, schema: dict | None = None) -> tuple[str, dict]:
@@ -150,10 +128,7 @@ class OllamaFastLLM(OllamaLLM):
 
     @traceable(run_type="llm", name="ollama_fast.route")
     def route(self, query: str) -> tuple[dict, dict]:
-        system = ("당신은 ICT 운영 지원 라우터다. 사용자 요청을 분류하라. "
-                  "장애·성능 저하·지연·진단·모니터링·티켓 등 운영 이슈면 route=incident, "
-                  "인사·잡담·일반 질문이면 route=chat. "
-                  "needs_analysis는 패턴 비교/통계 분석이 꼭 필요할 때만 true.")
+        system = self.config.prompts['route_ollama']
         content, usage = self._chat(system, query, schema=ROUTE_SCHEMA)
         try:
             raw = json.loads(content)
@@ -169,12 +144,11 @@ class OllamaFastLLM(OllamaLLM):
 
     @traceable(run_type="llm", name="ollama_fast.plan")
     def plan(self, query: str, procedure_prompt: str) -> tuple[dict, dict]:
-        system = ("당신은 ICT 운영 Supervisor의 planning 노드다. 표준 진단 절차에 따라 "
-                  "실행 계획(tasks)을 JSON으로 세워라. "
-                  "사용자 요청에 등장한 시스템마다 agent=research task를 하나씩 세워라 "
-                  f"(알려진 시스템: {', '.join(sorted(KNOWN_SYSTEMS))} — 특정 시스템이 "
-                  "언급되지 않았으면 auth-service를 기본으로 조사하라). "
-                  "패턴 분석이 꼭 필요하다고 판단되면 agent=analysis task를 추가해도 된다.")
+        if self.config.target_resolution_mode == 'strict' and resolve_targets(query)['status'] != 'resolved':
+            return empty_plan(self.name)
+        key = 'plan_strict' if self.config.target_resolution_mode == 'strict' else 'plan_ollama'
+        system = self.config.prompts[key].replace('{known_systems}', ', '.join(sorted(KNOWN_SYSTEMS)))
+        system = system.replace('{legacy_target}', self.config.legacy_target)
         user = f"## 표준 절차\n{procedure_prompt}\n\n## 사용자 요청\n{query}"
         content, usage = self._chat(system, user, schema=PLAN_SCHEMA)
 
@@ -210,15 +184,15 @@ class OllamaFastLLM(OllamaLLM):
                           "status": "pending"}
                          for i, target in enumerate(_guess_targets(query))]
             tasks = recovered + tasks
+        if self.config.target_resolution_mode == 'strict':
+            tasks = guard_monitoring_tasks(tasks, resolve_targets(query)['targets'])
         result = {"needs_analysis": bool(raw.get("needs_analysis", False)),
                   "tasks": tasks}
         return result, usage
 
     @traceable(run_type="llm", name="ollama_fast.analyze")
     def analyze(self, collected: list[dict]) -> tuple[str, dict]:
-        system = ("당신은 ICT 운영 패턴 분석가다. 여러 시스템의 모니터링 결과를 비교해 "
-                  "공통 원인이 의심되는 패턴이 있는지 한두 문장으로 짧게 답하라. "
-                  "패턴이 없으면 '특이 패턴 없음'이라고만 답하라.")
+        system = self.config.prompts['analyze']
         mon = [c["data"] for c in collected if c["source"] == "monitoring"]
         facts = "\n".join(
             f"- {d['system_name']}: 상태={d['status']}, CPU {d['cpu_percent']}%, "
@@ -227,8 +201,7 @@ class OllamaFastLLM(OllamaLLM):
 
     @traceable(run_type="llm", name="ollama_fast.chat")
     async def chat(self, query: str, history: list[dict], on_token=None) -> tuple[str, dict]:
-        system = ("당신은 간결한 한국어 비서다. 한두 문장으로 답하라. "
-                  "대화 이력에서 사용자가 밝힌 이름이 있으면 정확히 기억해 답하라.")
+        system = self.config.prompts['chat']
         rendered = "\n".join(f"{m['role']}: {m['content']}" for m in history[-10:])
         user = (f"## 지금까지의 대화\n{rendered or '(없음)'}\n\n"
                 f"## 사용자의 새 메시지\n{query}")
@@ -241,9 +214,7 @@ class OllamaQualityLLM(OllamaLLM):
     @traceable(run_type="llm", name="ollama_quality.write")
     async def write(self, query: str, collected: list[dict], attempt: int,
               feedback: str | None, on_token=None) -> tuple[str, dict]:
-        system = ("당신은 ICT 운영 보고 작성자다. 수집된 사실만 사용해 한국어로 "
-                  "간결한 대응 보고를 작성하라. 반드시 '1) ... 2) ... 3) ...' 형식의 "
-                  "번호 절차로 답하고, 수치는 수집된 값을 그대로 인용하라.")
+        system = self.config.prompts['write']
         facts = []
         for c in collected:
             if c["source"] == "monitoring":

@@ -9,10 +9,9 @@ incident: plan(MCP Prompt 절차 반영) → gate(권위 게이트) → research
 각 노드는 @traceable로 LangSmith에 계층 트리로 기록된다.
 """
 import asyncio
-import json
 import time
+import re
 from functools import partial
-from pathlib import Path
 from typing import Any, TypedDict
 
 from langgraph.config import get_stream_writer
@@ -21,30 +20,15 @@ from langsmith import traceable
 
 from .deps import SupervisorDeps
 from .retry import with_retry
+from .config import load_known_systems
+from .target_resolver import guess_target, resolve_targets, guard_monitoring_tasks
 
 
-def _load_known_systems() -> set[str]:
-    """ollama_llm.py/openai_llm.py와 동일한 소스(data/monitoring.json)에서
-    시스템 목록을 읽는다 — plan_node가 MCP Prompt에 넘길 system_name을
-    쿼리에서 멤버십 매칭으로 뽑아낼 때 쓴다."""
-    path = Path(__file__).resolve().parent.parent / "data" / "monitoring.json"
-    try:
-        return set(json.loads(path.read_text()).keys())
-    except (OSError, json.JSONDecodeError):
-        return {"auth-service", "web-01"}
+KNOWN_SYSTEMS = set(load_known_systems())
 
 
-KNOWN_SYSTEMS = _load_known_systems()
-
-
-def _extract_system_name(query: str) -> str:
-    """정규식 대신 실제 KNOWN_SYSTEMS 멤버십 매칭 — MCP Prompt(incident_analysis_
-    prompt)의 system_name은 "시스템: X" 한 줄짜리 컨텍스트라 항상 정해진 이름
-    중 하나로만 고정한다(여러 개 언급돼도 join하지 않음 — 실제 조사 대상 목록은
-    이후 plan()의 tasks가 별도로 결정). 쿼리에서 가장 먼저 등장하는 시스템을
-    고르고, 하나도 안 걸리면 가장 흔한 사례인 auth-service로 폴백."""
-    matches = [(query.index(s), s) for s in KNOWN_SYSTEMS if s in query]
-    return min(matches)[1] if matches else "auth-service"
+def _extract_system_name(query: str) -> str | None:
+    return guess_target(query)
 
 
 class AgentState(TypedDict, total=False):
@@ -52,6 +36,8 @@ class AgentState(TypedDict, total=False):
     thread_id: str
     history: list[dict]
     route: str
+    target_resolution: dict
+    target_issue: bool
     needs_analysis: bool
     tasks: list[dict]
     gate_removed: int
@@ -75,11 +61,33 @@ def _cost(state: AgentState, usage: dict) -> float:
 @traceable(name="route_node")
 async def route_node(state: AgentState, deps: SupervisorDeps) -> dict:
     """Wave 5 — 모든 쿼리가 무거운 파이프라인을 탈 필요는 없다."""
-    result, usage = deps.fast_llm.route(state["query"])
-    event = {"type": "RouteDecided", "route": result["route"]}
-    return {"route": result["route"], "needs_analysis": result["needs_analysis"],
-            "cost_usd": _cost(state, usage),
-            "events": state.get("events", []) + [event]}
+    strict = deps.config.target_resolution_mode == 'strict'
+    resolution = resolve_targets(state['query']) if strict else None
+    target_issue = bool(strict and resolution['status'] != 'resolved'
+                        and re.search(deps.config.target_required_pattern, state['query'], re.IGNORECASE))
+    if target_issue:
+        result, usage = {'route': 'incident', 'needs_analysis': False}, {'usd': 0.0}
+    else:
+        result, usage = deps.fast_llm.route(state['query'])
+        target_issue = bool(strict and result['route'] == 'incident' and resolution['status'] != 'resolved')
+    events = list(state.get('events', []))
+    if strict:
+        events.append({'type': 'TargetResolution', 'mode': 'strict', **resolution})
+    events.append({'type': 'RouteDecided', 'route': result['route']})
+    return {'route': result['route'], 'needs_analysis': result['needs_analysis'],
+            'target_resolution': resolution, 'target_issue': target_issue,
+            'cost_usd': _cost(state, usage), 'events': events}
+
+
+@traceable(name='target_clarification_node')
+async def target_clarification_node(state: AgentState, deps: SupervisorDeps) -> dict:
+    resolution = state['target_resolution']
+    name = 'unknown_target' if resolution['unknown'] else 'missing_target'
+    reply = deps.config.prompts[name].replace('{unknown}', ', '.join(resolution['unknown']))
+    reply = reply.replace('{known_systems}', ', '.join(load_known_systems()))
+    get_stream_writer()({'type': 'AnswerToken', 'delta': reply})
+    return {'final': reply, 'last_prompt': None,
+            'events': state['events'] + [{'type': 'Finalize', 'pipeline': 'target-clarification'}]}
 
 
 @traceable(name="chat_answer_node")
@@ -107,10 +115,12 @@ async def plan_node(state: AgentState, deps: SupervisorDeps) -> dict:
     prompt_server = await deps.mcp.find_prompt("incident_analysis_prompt")
     procedure = await deps.mcp.get_prompt(
         "incident_analysis_prompt",
-        {"system_name": _extract_system_name(state["query"]), "symptom": state["query"]},
+        {"system_name": guess_target(state["query"], deps.config), "symptom": state["query"]},
         server=prompt_server,
     )
     result, usage = deps.fast_llm.plan(state["query"], procedure)
+    if deps.config.target_resolution_mode == 'strict':
+        result['tasks'] = guard_monitoring_tasks(result['tasks'], state['target_resolution']['targets'])
     targets = [t["target"] for t in result["tasks"]
                if t["agent"] == "research" and t.get("target")]
     event = {"type": "PlanCreated", "task_count": len(result["tasks"]),
@@ -138,6 +148,11 @@ async def gate_node(state: AgentState, deps: SupervisorDeps) -> dict:
 async def research_node(state: AgentState, deps: SupervisorDeps) -> dict:
     """Wave 15 가드 + Wave 10b 병렬 + Wave 9 재시도 + Wave 2 Tool/Resource 실호출."""
     tasks = state["tasks"]
+    if deps.config.target_resolution_mode == 'strict':
+        approved = state.get('target_resolution', {}).get('targets', [])
+        if any(t.get('kind') == 'monitoring' and t.get('status') == 'pending'
+               and t.get('target') not in approved for t in tasks):
+            raise ValueError('Unapproved monitoring target')
     research_indices = [i for i, t in enumerate(tasks)
                         if t["agent"] == "research" and t["status"] == "pending"]
     # Wave 15 — 객체가 아니라 '실행할 목록'을 검사한다 (not research_agent 버그의 수정판)
@@ -295,6 +310,8 @@ async def finalize_node(state: AgentState, deps: SupervisorDeps) -> dict:
 
 
 def _after_route(state: AgentState) -> str:
+    if state.get('target_issue'):
+        return 'target_clarification'
     return "chat_answer" if state["route"] == "chat" else "plan"
 
 
@@ -311,6 +328,7 @@ def build_graph(deps: SupervisorDeps):
     g = StateGraph(AgentState)
     node = lambda fn: partial(fn, deps=deps)   # Wave 13 — 명시적 의존성 주입
     g.add_node("route", node(route_node))
+    g.add_node("target_clarification", node(target_clarification_node))
     g.add_node("chat_answer", node(chat_answer_node))
     g.add_node("plan", node(plan_node))
     g.add_node("gate", node(gate_node))
@@ -323,7 +341,8 @@ def build_graph(deps: SupervisorDeps):
 
     g.set_entry_point("route")
     g.add_conditional_edges("route", _after_route,
-                            {"chat_answer": "chat_answer", "plan": "plan"})
+                            {"chat_answer": "chat_answer", "plan": "plan", "target_clarification": "target_clarification"})
+    g.add_edge("target_clarification", END)
     g.add_edge("chat_answer", END)
     g.add_edge("plan", "gate")
     g.add_edge("gate", "research")

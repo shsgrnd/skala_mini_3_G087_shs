@@ -243,3 +243,28 @@ all_total_vue/
 │   ├── image_usecase/           # manual_ollma.md 캡처 이미지
 │   └── image_usecase_openai/    # manual_openai.md 캡처 이미지
 ```
+
+
+## 설정과 대상 식별
+
+`config/agent.json`에서 LLM 시스템 프롬프트, legacy 기본 대상과 확인 질문 정책을 관리한다.
+`AGENT_CONFIG_PATH`로 다른 JSON을 지정할 수 있다. 설정 변경은 서버 재시작 후 적용한다.
+시스템 목록은 기존 `data/monitoring.json`을 사용한다.
+
+- `TARGET_RESOLUTION_MODE=legacy` (기본): 기존 대상 폴백·모델 프롬프트 유지.
+- `TARGET_RESOLUTION_MODE=strict`: 미식별·미등록 운영 대상은 확인 질문, 명시한 여러 시스템만 조회. v2 전용.
+- `/health`와 HTTP metadata에서 mode/config SHA를 확인한다. strict SSE는 `TargetResolution` 이벤트를 추가하고 `FinalAnswer.prompt`는 null로 반환한다.
+
+기존 서버를 종료한 후 아래처럼 직접 재시작하면 세션 DB를 지우는 실행 스크립트의 기존 동작을 피할 수 있다.
+
+```bash
+TARGET_RESOLUTION_MODE=strict LLM_BACKEND=ollama SUPERVISOR_VERSION=v2 .venv/bin/python server.py
+```
+
+롤백은 같은 명령에서 `TARGET_RESOLUTION_MODE=legacy`로 변경 후 재시작한다.
+기존 `web_demo_server.py` 프론트는 그대로 사용한다.
+
+서비스 단위 테스트: `pytest`를 별도 설치한 뒤 `.venv/bin/python -m pytest -q`.
+현재 알려진 한계: 일부 fake 질의의 라우팅과 Ollama analyze 호출의 시간 초과 문제가 남아 있다.
+
+최종 발표 보고서: [G087_신형섭.html](ppt/G087_신형섭.html)
