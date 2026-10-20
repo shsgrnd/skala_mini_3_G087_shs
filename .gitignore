@@ -1,0 +1,20 @@
+.env
+.env.*
+!.env.example
+.venv/
+session.db
+session.db-journal
+session.db-wal
+session.db-shm
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+*.log
+.DS_Store
+
+# Rebuildable runbook vector index
+/data/chroma/
+docs/
