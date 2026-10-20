@@ -51,3 +51,6 @@ requirements-dev.txt
 # Public runtime defaults only; other local config stays private.
 /config/*
 !/config/agent.json
+
+# Offline report evaluation tooling, datasets and judge experiments
+/eval/
