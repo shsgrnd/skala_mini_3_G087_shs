@@ -14,7 +14,14 @@ __pycache__/
 htmlcov/
 *.log
 .DS_Store
-
-# Rebuildable runbook vector index
-/data/chroma/
 docs/
+artifacts/
+/scripts/
+/tests/*
+!/tests/test_classifier_baseline.py
+!/tests/fixtures/
+/tests/fixtures/*
+!/tests/fixtures/classifier_cases.jsonl
+/AGENTS.md
+pytest.ini
+requirements-dev.txt

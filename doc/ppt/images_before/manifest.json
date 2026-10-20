@@ -1,0 +1,33 @@
+{
+  "captured_at_utc": "2026-10-20T02:47:53.172220+00:00",
+  "backend": "fake",
+  "models": [
+    "fast-model-stub",
+    "quality-model-stub"
+  ],
+  "supervisor": "v2",
+  "url": "http://127.0.0.1:8600",
+  "fixed_monitoring": true,
+  "db": "temporary isolated SQLite",
+  "image_format": "JPEG",
+  "image_width": 1512,
+  "image_height": 682,
+  "note": "Original UI incorrectly labels fake as 실모델; captures are fake, not real-model output. No image content edited.",
+  "screenshots": [
+    {
+      "file": "s0_regression_route.jpg",
+      "query": "payments-service 결제 응답이 느려지고 CPU가 치솟았어요, 원인 확인해주세요",
+      "sha256": "ed33cf950e8ad5e1ea1dd63f5e6b20fdee9bfa971a2eccf96cf76f66c240145c"
+    },
+    {
+      "file": "s0_incident_cpu.jpg",
+      "query": "payments-service CPU 급증 장애 진단",
+      "sha256": "6cda838f2a4758f0eb09db8039a0d751ae67dceef7ff50969441f8630cc9e181"
+    },
+    {
+      "file": "s0_unknown_target.jpg",
+      "query": "billing-service 장애 진단",
+      "sha256": "5b4406f885b24f7d5277eda29c6fe443cfbeb64b0399ca7375f736b786a6ebc1"
+    }
+  ]
+}
