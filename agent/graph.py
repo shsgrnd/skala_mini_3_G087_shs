@@ -9,6 +9,7 @@ incident: plan(MCP Prompt 절차 반영) → gate(권위 게이트) → research
 각 노드는 @traceable로 LangSmith에 계층 트리로 기록된다.
 """
 import asyncio
+import logging
 import time
 import re
 from functools import partial
@@ -37,6 +38,7 @@ class AgentState(TypedDict, total=False):
     history: list[dict]
     route: str
     target_resolution: dict
+    retrieval: dict
     target_issue: bool
     needs_analysis: bool
     tasks: list[dict]
@@ -236,13 +238,39 @@ async def replan_check_node(state: AgentState, deps: SupervisorDeps) -> dict:
     if has_runbook or rounds >= 1:
         verdict = {"type": "ReplanCheck", "round": rounds, "is_sufficient": True}
         return {"events": state["events"] + [verdict]}
-    incident_type = _classify_incident_type(state.get("collected", []))
+    retrieval = None
+    if deps.config.incident_classifier == 'rag':
+        try:
+            retrieval = await asyncio.to_thread(deps.incident_retriever.retrieve, state.get('collected', []))
+        except Exception:
+            logging.getLogger(__name__).exception('Runbook retrieval failed')
+            retrieval = {'retrieval_mode': 'rag', 'accepted': False, 'reason': 'retrieval_failed', 'candidates': []}
+        events = state['events'] + [{'type': 'RunbookRetrieval', **retrieval}]
+        if not retrieval['accepted']:
+            return {'retrieval': retrieval, 'events': events + [
+                {'type': 'ReplanCheck', 'round': rounds, 'is_sufficient': False, 'abstained': True}]}
+        incident_type = retrieval['candidates'][0]['incident_type']
+    else:
+        incident_type = _classify_incident_type(state.get('collected', []))
+        events = state['events']
+
     gap_task = {"id": "task-gap-runbook", "agent": "research", "kind": "runbook",
                 "target": incident_type, "status": "pending"}
     verdict = {"type": "ReplanCheck", "round": rounds, "is_sufficient": False,
                "gap_task": gap_task["id"], "target": incident_type}
     return {"tasks": state["tasks"] + [gap_task], "replan_rounds": rounds + 1,
-            "events": state["events"] + [verdict]}
+            "retrieval": retrieval, "events": events + [verdict]}
+
+
+@traceable(name='retrieval_clarification_node')
+async def retrieval_clarification_node(state: AgentState, deps: SupervisorDeps) -> dict:
+    if state['retrieval']['reason'] == 'retrieval_failed':
+        reply = deps.config.prompts['retrieval_failed']
+    else:
+        reply = deps.config.prompts['retrieval_insufficient']
+    get_stream_writer()({'type': 'AnswerToken', 'delta': reply})
+    return {'final': reply, 'last_prompt': None,
+            'events': state['events'] + [{'type': 'Finalize', 'pipeline': 'retrieval-clarification'}]}
 
 
 @traceable(name="analysis_node")
@@ -317,6 +345,8 @@ def _after_route(state: AgentState) -> str:
 
 def _after_replan_check(state: AgentState) -> str:
     last = state["events"][-1]
+    if last.get("abstained"):
+        return "retrieval_clarification"
     return "analysis" if last.get("is_sufficient") else "research"
 
 
@@ -334,6 +364,8 @@ def build_graph(deps: SupervisorDeps):
     g.add_node("gate", node(gate_node))
     g.add_node("research", node(research_node))
     g.add_node("replan_check", node(replan_check_node))
+    g.add_node("retrieval_clarification", node(retrieval_clarification_node))
+    g.add_edge("retrieval_clarification", END)
     g.add_node("analysis", node(analysis_node))
     g.add_node("write", node(write_node))
     g.add_node("validate", node(validate_node))
@@ -348,7 +380,7 @@ def build_graph(deps: SupervisorDeps):
     g.add_edge("gate", "research")
     g.add_edge("research", "replan_check")
     g.add_conditional_edges("replan_check", _after_replan_check,
-                            {"analysis": "analysis", "research": "research"})
+                            {"analysis": "analysis", "research": "research", "retrieval_clarification": "retrieval_clarification"})
     g.add_edge("analysis", "write")
     g.add_edge("write", "validate")
     g.add_conditional_edges("validate", _after_validate,

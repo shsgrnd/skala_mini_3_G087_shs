@@ -74,6 +74,7 @@ class OllamaLLM:
             "model": self.model,
             "messages": [{"role": "system", "content": system},
                          {"role": "user", "content": user}],
+            "think": False,  # Qwen3 default thinking can loop without producing a final answer.
             "stream": False,
             "options": {"temperature": 0.0},
         }
@@ -97,6 +98,7 @@ class OllamaLLM:
             "model": self.model,
             "messages": [{"role": "system", "content": system},
                          {"role": "user", "content": user}],
+            "think": False,
             "stream": True,
             "options": {"temperature": 0.0},
         }

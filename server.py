@@ -67,6 +67,12 @@ async def lifespan(app: FastAPI):
     supervisor_version = os.environ.get('SUPERVISOR_VERSION', 'v2')
     if config.target_resolution_mode == 'strict' and supervisor_version != 'v2':
         raise ValueError('TARGET_RESOLUTION_MODE=strict requires SUPERVISOR_VERSION=v2')
+    incident_retriever = None
+    if config.incident_classifier == 'rag':
+        if supervisor_version != 'v2':
+            raise ValueError('INCIDENT_CLASSIFIER=rag requires SUPERVISOR_VERSION=v2')
+        from agent.rag.retriever import IncidentRetriever
+        incident_retriever = IncidentRetriever(config.rag)
     CREATION_COUNT += 1
     mcp = MCPClient()
     await mcp.start()   # Wave 2 — MCP subprocess는 서버 수명 동안 딱 1개
@@ -79,6 +85,7 @@ async def lifespan(app: FastAPI):
         session_store=SqliteSessionStore(),
         version=supervisor_version,
         config=config,
+        incident_retriever=incident_retriever,
     )
     app.state.deps = deps
     app.state.graph = build_graph(deps) if deps.version == "v2" else None
@@ -104,6 +111,9 @@ async def health():
             "llm_backend": app.state.llm_backend,
             "target_resolution_mode": app.state.deps.config.target_resolution_mode,
             "config_sha256": app.state.deps.config.sha256,
+            "incident_classifier": app.state.deps.config.incident_classifier,
+            "rag_index_fingerprint": (app.state.deps.incident_retriever.identity['fingerprint']
+                                      if app.state.deps.incident_retriever else None),
             "fast_llm": app.state.deps.fast_llm.name,
             "quality_llm": app.state.deps.quality_llm.name}
 
@@ -116,6 +126,8 @@ async def version():
 def _metadata(result: dict, run_id: str | None) -> dict:
     return {
         "route": result.get("route"),
+        "incident_classifier": app.state.deps.config.incident_classifier,
+        "retrieval": result.get("retrieval"),
         "target_resolution_mode": app.state.deps.config.target_resolution_mode,
         "target_resolution": result.get('target_resolution'),
         "config_sha256": app.state.deps.config.sha256,

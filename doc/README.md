@@ -265,6 +265,46 @@ TARGET_RESOLUTION_MODE=strict LLM_BACKEND=ollama SUPERVISOR_VERSION=v2 .venv/bin
 기존 `web_demo_server.py` 프론트는 그대로 사용한다.
 
 서비스 단위 테스트: `pytest`를 별도 설치한 뒤 `.venv/bin/python -m pytest -q`.
-현재 알려진 한계: 일부 fake 질의의 라우팅과 Ollama analyze 호출의 시간 초과 문제가 남아 있다.
+현재 알려진 한계: 일부 fake 질의의 라우팅 문제가 남아 있다.
+Ollama는 동기·스트리밍 요청에 `think=false`를 명시한다. Qwen3가 분석 중 추론을 계속 생성하면서 최종 답변을 반환하지 않던 문제를 방지한다. 코드 변경 적용에는 서버 재시작이 필요하다.
 
 최종 발표 보고서: [G087_신형섭.html](ppt/G087_신형섭.html)
+
+
+## 의미 기반 런북 검색
+
+기본값 `INCIDENT_CLASSIFIER=keyword`는 기존 규칙을 유지한다. v2에서만 `rag`를 사용할 수 있다.
+프로젝트 루트에서 의존성을 설치하고 인덱스를 먼저 구축한다.
+
+```bash
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m agent.rag.indexer
+```
+
+첫 구축은 고정 버전의 [multilingual-e5-small](https://huggingface.co/intfloat/multilingual-e5-small)을 다운로드한다.
+CPU에서 정규화한 384차원 임베딩을 생성하며 `query: `/`passage: ` prefix, 최대 512토큰,
+Chroma cosine 거리의 `1-distance`를 유사도로 사용한다. 점수는 확률이 아니다.
+짧은 런북 6개를 문서별로 인덱싱하며, 검색 후보를 선택한 뒤 본문은 기존 MCP Resource로 읽는다.
+
+`.env`에 `INCIDENT_CLASSIFIER=rag`를 설정한 뒤 기존 서버를 종료하고 직접 재시작한다.
+
+```bash
+TARGET_RESOLUTION_MODE=strict LLM_BACKEND=ollama SUPERVISOR_VERSION=v2 INCIDENT_CLASSIFIER=rag .venv/bin/python server.py
+```
+
+`/health`의 `incident_classifier`와 `rag_index_fingerprint`로 적용 여부를 확인한다.
+HTTP metadata와 SSE `RunbookRetrieval` 이벤트에 후보·출처·점수·모델 버전·검색 시간이 포함된다.
+처음 계획에 이미 런북이 있으면 추가 검색은 실행하지 않는다.
+
+`config/agent.json`의 `rag`에서 모델 commit, 차원, Top-K, threshold와 margin을 관리한다.
+기본 Top-K는 3, threshold는 0.8, 1·2위 최소 차이는 0.01이다.
+점수가 낮거나 후보가 비슷하면 런북을 추측하지 않고 추가 증상을 요청한다.
+작은 합성 사례로 정한 기준이므로 운영 데이터에 맞춘 별도 평가가 필요하다.
+
+인덱스는 Git 제외 경로 `data/chroma/runbooks/`에 저장하며 `RAG_INDEX_PATH`로 변경할 수 있다.
+원본 런북·모델·차원·prefix가 바뀌거나 인덱스가 없으면 위 구축 명령을 다시 실행한다.
+서버는 모델을 자동 다운로드하지 않으므로 구축 때 사용한 모델 캐시가 필요하다.
+재구축은 새 corpus fingerprint의 collection을 만든 뒤 manifest를 교체하며, 이전 collection은 보존한다.
+자주 문서를 변경하는 환경에서는 사용 중이지 않은 세대의 정리 정책이 추가로 필요하다.
+
+롤백은 `INCIDENT_CLASSIFIER=keyword`로 변경 후 재시작한다. 원본 런북과 세션 DB는 유지된다.

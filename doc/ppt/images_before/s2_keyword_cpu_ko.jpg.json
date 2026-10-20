@@ -1,0 +1,20 @@
+{
+  "image": "s2_keyword_cpu_ko.jpg",
+  "sha256": "f2705212960f6cbf7912c2a4b9cb6c6613e5ae86fff7bd1b78bd31f832df0107",
+  "query": "payments-service 장애 진단",
+  "incident_classifier": "keyword",
+  "target_resolution_mode": "strict",
+  "supervisor_version": "v2",
+  "llm_backend": "fake",
+  "embedding": null,
+  "synthetic_monitoring": {
+    "system_name": "payments-service",
+    "status": "degraded",
+    "alerts": [
+      "프로세서 사용률 급증"
+    ],
+    "cpu_percent": 96.2
+  },
+  "isolation": "temporary DB, fixture stdio MCP, backend8101/frontend8601; user8100/8600 unchanged",
+  "note": "Original UI says fake 실모델; LLM is fake, not Ollama. First deliberately short draft belongs to existing validator demo. Actual unedited JPEG browser capture."
+}

@@ -18,3 +18,5 @@ class SupervisorDeps:
     version: str         # Wave 14 — SUPERVISOR_VERSION (v1/v2)
 
     config: AgentConfig = field(default_factory=load_config)
+
+    incident_retriever: Any = None

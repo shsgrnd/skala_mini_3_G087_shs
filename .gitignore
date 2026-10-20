@@ -14,16 +14,32 @@ __pycache__/
 htmlcov/
 *.log
 .DS_Store
+
+# Rebuildable runbook vector index
+/data/chroma/
 docs/
+# Local report tooling and intermediate outputs (final doc/ppt/ stays public)
 artifacts/
 /scripts/
+
+# Keep application unit tests; report-only tests stay local
 /tests/*
 !/tests/test_classifier_baseline.py
+!/tests/test_target_resolution.py
+!/tests/test_config.py
 !/tests/fixtures/
 /tests/fixtures/*
 !/tests/fixtures/classifier_cases.jsonl
+
+# Local development instructions
 /AGENTS.md
+
 pytest.ini
 requirements-dev.txt
-!/tests/test_config.py
-!/tests/test_target_resolution.py
+!/tests/test_rag_index.py
+!/tests/test_incident_classifier.py
+
+# Chroma default path (library probes/local indexes)
+/chroma/
+
+!/tests/test_ollama_transport.py

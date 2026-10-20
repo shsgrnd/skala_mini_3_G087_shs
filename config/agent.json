@@ -11,6 +11,16 @@
     "plan_openai": "당신은 ICT 운영 Supervisor의 planning 노드다. 표준 진단 절차에 따라 실행 계획(tasks)을 JSON으로 세워라. 사용자 요청에 등장한 시스템마다 agent=research task를 하나씩 세워라 (알려진 시스템: {known_systems} — 특정 시스템이 언급되지 않았으면 {legacy_target}를 기본으로 조사하라). 패턴 분석이 꼭 필요하다고 판단되면 agent=analysis task를 추가해도 된다. JSON 객체로만 응답하라. 스키마: {\"needs_analysis\": boolean, \"tasks\": [{\"agent\": \"research\"|\"analysis\", \"target\": string(선택)}]}",
     "plan_strict": "당신은 ICT 운영 Supervisor의 planning 노드다. 실행 계획을 JSON으로 작성하라. 알려진 시스템: {known_systems}. 사용자가 명시한 알려진 시스템만 research 대상으로 삼고 모두 보존하라. 미식별·없는 대상은 다른 시스템으로 대체하지 마라. 패턴 비교가 꼭 필요할 때만 analysis 작업을 추가하라. JSON 스키마: {\"needs_analysis\": boolean, \"tasks\": [{\"agent\": \"research\" 또는 \"analysis\", \"target\": \"시스템명\"}]} ",
     "missing_target": "조회할 시스템을 명시해 주세요. 확인 가능한 시스템: {known_systems}. 아직 시스템을 조회하지 않았습니다.",
-    "unknown_target": "등록되지 않은 시스템입니다: {unknown}. 정확한 이름을 확인해 주세요. 확인 가능한 시스템: {known_systems}. 아직 시스템을 조회하지 않았습니다."
+    "unknown_target": "등록되지 않은 시스템입니다: {unknown}. 정확한 이름을 확인해 주세요. 확인 가능한 시스템: {known_systems}. 아직 시스템을 조회하지 않았습니다.",
+    "retrieval_failed": "런북 검색을 완료하지 못했습니다. 인덱스와 원본 문서를 확인하고 python -m agent.rag.indexer로 재구축해 주세요.",
+    "retrieval_insufficient": "모니터링 증상만으로 적합한 런북을 확정할 근거가 부족합니다. 발생 시점과 구체적인 오류·증상을 추가로 알려 주세요."
+  },
+  "rag": {
+    "model": "intfloat/multilingual-e5-small",
+    "revision": "614241f622f53c4eeff9890bdc4f31cfecc418b3",
+    "dimension": 384,
+    "top_k": 3,
+    "threshold": 0.8,
+    "margin": 0.01
   }
 }
