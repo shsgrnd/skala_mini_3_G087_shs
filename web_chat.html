@@ -125,6 +125,7 @@ const STEP_LABELS = {
   MetricResearch: e => `지표 조사: ${e.status}${e.target ? ` (${e.target})` : ''}`,
   LogResearch: e => `합성 로그 조사: ${e.status}${e.target ? ` (${e.target})` : ''}`,
   RunbookResearch: e => `런북 조사: ${e.status}${e.target ? ` (${e.target})` : ''}`,
+  ConversationMemory: e => e.status === 'fallback' ? '대화 요약 실패 → 최근 대화로 응답' : e.summary_saved ? '이전 대화 요약 저장' : null,
   ResearchAggregate: e => `근거 통합: ${e.status} (${e.evidence_count}개)`,
   TaskFailed: e => `수집 실패: ${e.source} (${e.target})`,
   ReplanCheck: e => e.is_sufficient ? null : e.abstained ? '적합한 런북을 확정할 근거 부족' : `정보 부족 → 장애유형 "${e.target}"로 추가 조사`,

@@ -76,12 +76,26 @@ class FastLLM(FakeLLM):
             summary = "모니터링된 시스템 모두 healthy — 패턴상 이상 징후 없음"
         return summary, self._usage(str(collected), summary)
 
+    @traceable(run_type="llm", name="fast_llm.summarize_history")
+    async def summarize_history(self, previous: dict | None, messages: list[dict]) -> tuple[dict, dict]:
+        from .memory import empty_summary, summary_input
+        # fake는 사용자 원문을 보존하는 배선 검증용이다. 의미 요약 품질은 실모델로 따로 측정한다.
+        summary = {key:list(value) for key,value in (previous or empty_summary()).items()}
+        for message in messages:
+            if message['role']=='user' and message['content'] not in summary['facts']:
+                summary['facts'].append(message['content'])
+        import json
+        return summary, self._usage(summary_input(previous,messages),json.dumps(summary,ensure_ascii=False))
+
     @traceable(run_type="llm", name="fast_llm.chat")
-    async def chat(self, query: str, history: list[dict], on_token=None) -> tuple[str, dict]:
+    async def chat(self, query: str, history: list[dict], on_token=None, history_context=None) -> tuple[str, dict]:
         """Wave 5의 direct 경로 + Wave 12 증명용 — 히스토리에서 이름을 기억해낸다.
 
         fake 백엔드는 실제 네트워크 호출이 없어 토큰 단위로 쪼갤 대상이 없다 —
         ollama_llm.py와 인터페이스(on_token 콜백)만 맞추고 결과를 한 번에 반환한다."""
+        if history_context is not None:
+            from .memory import render_history
+            history = [{"role":"user","content":render_history([],history_context)}, *history]
         for msg in reversed(history):
             m = re.search(r"제 이름은 (\S+?)입니다", msg.get("content", ""))
             if m and re.search(r"이름이 뭐", query):

@@ -1,0 +1,18 @@
+{
+  "date": "2026-10-20",
+  "image": "s4_summary_memory.jpg",
+  "sha256": "a438abbd23c707013fc8b155112ab029470f08c0378504ef96885a00b4b0f68e",
+  "capture": "actual Chrome screenshot via cua, JPEG bytes unchanged",
+  "viewport": "1512x738",
+  "model": "ollama:qwen3:8b",
+  "think": false,
+  "memory_mode": "summary",
+  "routing": "fixed chat fixture",
+  "history": "12 fixed synthetic turns seeded in temporary SQLite, assistant acknowledgements fixed",
+  "initial_fact": "제 이름은 민수입니다",
+  "query": "앞서 말한 제 이름만 답해 주세요.",
+  "actual_reply": "민수입니다.",
+  "endpoint": "SSE, isolated backend8101/frontend8601",
+  "user_server_env_db": "untouched",
+  "caveat": "This captures a fixed-history scenario; does not prove overall real-world quality."
+}

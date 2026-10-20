@@ -42,6 +42,7 @@ class AgentState(TypedDict, total=False):
     query: str
     thread_id: str
     history: list[dict]
+    history_context: dict
     route: str
     target_resolution: dict
     retrieval: dict
@@ -111,7 +112,8 @@ async def chat_answer_node(state: AgentState, deps: SupervisorDeps) -> dict:
     writer = get_stream_writer()
     reply, usage = await deps.fast_llm.chat(
         state["query"], state.get("history", []),
-        on_token=lambda piece: writer({"type": "AnswerToken", "delta": piece}))
+        on_token=lambda piece: writer({"type": "AnswerToken", "delta": piece}),
+        **({'history_context':state['history_context']} if state.get('history_context') is not None else {}))
     return {"final": reply, "last_prompt": usage.get("prompt"),
             "cost_usd": _cost(state, usage),
             "events": state["events"] + [{"type": "Finalize", "pipeline": "chat-direct"}]}

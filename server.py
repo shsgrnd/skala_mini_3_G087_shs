@@ -16,6 +16,7 @@ strict/rag/multi 조합은 자원을 열기 전에 거부한다. HTTP metadata�
 """
 import json
 import os
+import re
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
@@ -34,6 +35,7 @@ from agent.fake_llm import FastLLM, QualityLLM
 from agent.graph import build_graph
 from agent.mcp_client import MCPClient
 from agent.session_store import SqliteSessionStore
+from agent.memory import ConversationMemory, PreparedMemory
 from agent.supervisor_v1 import run_v1
 
 CREATION_COUNT = 0   # Wave 1 — 프로세스 내 Agent 번들 생성 횟수 (항상 1이어야 정상)
@@ -75,6 +77,8 @@ async def lifespan(app: FastAPI):
         raise ValueError('TARGET_RESOLUTION_MODE=strict requires SUPERVISOR_VERSION=v2')
     if config.research_strategy == 'multi' and supervisor_version != 'v2':
         raise ValueError('RESEARCH_STRATEGY=multi requires SUPERVISOR_VERSION=v2')
+    if config.memory_mode == 'summary' and supervisor_version != 'v2':
+        raise ValueError('MEMORY_MODE=summary requires SUPERVISOR_VERSION=v2')
     incident_retriever = None
     if config.incident_classifier == 'rag':
         if supervisor_version != 'v2':
@@ -95,6 +99,8 @@ async def lifespan(app: FastAPI):
         config=config,
         incident_retriever=incident_retriever,
     )
+    if config.memory_mode == 'summary':
+        deps.memory = ConversationMemory(deps.session_store, deps.fast_llm, config.memory)
     app.state.deps = deps
     app.state.graph = build_graph(deps) if deps.version == "v2" else None
     app.state.instance_id = id(deps)
@@ -121,6 +127,7 @@ async def health():
             "config_sha256": app.state.deps.config.sha256,
             "incident_classifier": app.state.deps.config.incident_classifier,
             "research_strategy": app.state.deps.config.research_strategy,
+            "memory_mode": app.state.deps.config.memory_mode,
             "rag_index_fingerprint": (app.state.deps.incident_retriever.identity['fingerprint']
                                       if app.state.deps.incident_retriever else None),
             "fast_llm": app.state.deps.fast_llm.name,
@@ -135,6 +142,7 @@ async def version():
 def _metadata(result: dict, run_id: str | None) -> dict:
     return {
         "route": result.get("route"),
+        "memory": result.get("memory", {"mode":"recent"}),
         "incident_classifier": app.state.deps.config.incident_classifier,
         "retrieval": result.get("retrieval"),
         "research_strategy": app.state.deps.config.research_strategy,
@@ -158,18 +166,46 @@ def _metadata(result: dict, run_id: str | None) -> dict:
     }
 
 
+@asynccontextmanager
+async def _conversation(deps, thread_id: str, message: str):
+    """HTTP/SSE가 같은 준비·잠금 범위를 쓴다. yield 중 실패하면 후보는 저장하지 않는다."""
+    if deps.memory is None:
+        yield PreparedMemory(deps.session_store.load(thread_id),info={'mode':'recent'})
+        return
+    async with deps.memory.turn(thread_id):
+        # 현재 운영 질문의 대상 가드 전에 요약 LLM을 호출하거나 과거 대상을 추론하지 않는다.
+        if re.search(deps.config.target_required_pattern,message,re.IGNORECASE):
+            prepared = PreparedMemory([],info={'mode':'summary','status':'not_used_incident',
+                                               'summary_calls':0,'summary_cost_usd':0.0})
+        else:
+            prepared = await deps.memory.prepare(thread_id)
+        yield prepared
+
+
+def _conversation_state(message: str, thread_id: str, prepared: PreparedMemory) -> dict:
+    return {'query':message,'thread_id':thread_id,'history':prepared.history,
+            'history_context':prepared.summary,'events':[],
+            'cost_usd':prepared.info.get('summary_cost_usd',0.0) or 0.0}
+
+
+def _save_conversation(deps, thread_id: str, message: str, reply: str, prepared: PreparedMemory):
+    # 완성된 응답만 저장한다. FinalAnswer 전 commit해 완료 직후 연결이 끊겨도 저장을 보장한다.
+    if deps.memory is not None:
+        deps.memory.commit(thread_id,message,reply,prepared)
+    else:
+        deps.session_store.save_turn(thread_id,message,reply)
+
+
 @traceable(name="chat_request")
 async def _handle_chat(message: str, thread_id: str) -> tuple[dict, str | None]:
     deps = app.state.deps
-    history = deps.session_store.load(thread_id)   # Wave 12
-    if deps.version == "v2":
-        result = await app.state.graph.ainvoke(
-            {"query": message, "thread_id": thread_id, "history": history,
-             "events": [], "cost_usd": 0.0})
-    else:
-        result = await run_v1(deps, message, thread_id, history)   # Wave 14
-    deps.session_store.append(thread_id, "user", message)
-    deps.session_store.append(thread_id, "assistant", result["final"])
+    async with _conversation(deps,thread_id,message) as prepared:
+        if deps.version == "v2":
+            result = await app.state.graph.ainvoke(_conversation_state(message,thread_id,prepared))
+        else:
+            result = await run_v1(deps,message,thread_id,prepared.history)
+        _save_conversation(deps,thread_id,message,result['final'],prepared)
+        result['memory'] = prepared.info
     rt = get_current_run_tree()
     return result, (str(rt.id) if rt else None)
 
@@ -191,41 +227,39 @@ async def chat_stream(message: str, thread_id: str = "default"):
     deps = app.state.deps
 
     async def gen():
-        history = deps.session_store.load(thread_id)
-        if deps.version != "v2":
-            result = await run_v1(deps, message, thread_id, history)
-            for ev in result["events"]:
-                yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
-            yield f"data: {json.dumps({'type': 'FinalAnswer', 'reply': result['final']}, ensure_ascii=False)}\n\n"
-        else:
-            seen = 0
-            final = ""
-            last_prompt = None   # finalize까지 살아남은 최종 write/chat 호출의 실제 프롬프트
-            # stream_mode를 리스트로 주면 (mode, payload) 튜플이 나온다 — "updates"는
-            # 노드가 끝날 때마다의 상태 델타, "custom"은 write_node/chat_answer_node가
-            # get_stream_writer()로 실행 중에 즉시 흘려보내는 토큰(AnswerToken) 이벤트다.
-            async for mode, payload in app.state.graph.astream(
-                    {"query": message, "thread_id": thread_id, "history": history,
-                     "events": [], "cost_usd": 0.0}, stream_mode=["updates", "custom"]):
-                if mode == "custom":
-                    yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
-                    continue
-                for node_name, delta in payload.items():
-                    for ev in (delta.get("events") or [])[seen:]:
-                        ev = {**ev, "node": node_name}
-                        yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
-                    if delta.get("events"):
-                        seen = len(delta["events"])
-                    if delta.get("final"):
-                        final = delta["final"]
-                    if delta.get("last_prompt"):
-                        last_prompt = delta["last_prompt"]
-            if deps.config.target_resolution_mode == 'strict':
-                last_prompt = None
-            yield f"data: {json.dumps({'type': 'FinalAnswer', 'reply': final, 'prompt': last_prompt}, ensure_ascii=False)}\n\n"
-            deps.session_store.append(thread_id, "user", message)
-            deps.session_store.append(thread_id, "assistant", final)
-        yield "data: [DONE]\n\n"
+        async with _conversation(deps,thread_id,message) as prepared:
+            if deps.version != "v2":
+                # v1 recent는 비교 기준선의 기존 SSE 저장 동작을 유지한다. summary는 시작 시 거부한다.
+                result = await run_v1(deps,message,thread_id,prepared.history)
+                for ev in result['events']:
+                    yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type':'FinalAnswer','reply':result['final']}, ensure_ascii=False)}\n\n"
+            else:
+                seen, final, last_prompt = 0, '', None
+                # custom은 실행 중 토큰, updates는 완료한 노드의 상태다. 미완료 응답은 저장하지 않는다.
+                async for mode,payload in app.state.graph.astream(
+                        _conversation_state(message,thread_id,prepared),stream_mode=['updates','custom']):
+                    if mode == 'custom':
+                        yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                        continue
+                    for node_name,delta in payload.items():
+                        for ev in (delta.get('events') or [])[seen:]:
+                            yield f"data: {json.dumps({**ev,'node':node_name}, ensure_ascii=False)}\n\n"
+                        if delta.get('events'):
+                            seen = len(delta['events'])
+                        if delta.get('final'):
+                            final = delta['final']
+                        if delta.get('last_prompt'):
+                            last_prompt = delta['last_prompt']
+                if not final:
+                    raise RuntimeError('Graph completed without a final answer')
+                _save_conversation(deps,thread_id,message,final,prepared)
+                if deps.memory is not None:
+                    yield f"data: {json.dumps({'type':'ConversationMemory',**prepared.info}, ensure_ascii=False)}\n\n"
+                if deps.config.target_resolution_mode == 'strict':
+                    last_prompt = None
+                yield f"data: {json.dumps({'type':'FinalAnswer','reply':final,'prompt':last_prompt}, ensure_ascii=False)}\n\n"
+            yield "data: [DONE]\n\n"
 
     return StreamingResponse(gen(), media_type="text/event-stream")
 

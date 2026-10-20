@@ -207,10 +207,26 @@ class OllamaFastLLM(OllamaLLM):
             f"알림 {d['alerts']}" for d in mon) or "(모니터링 데이터 없음)"
         return self._chat(system, facts)
 
+    @traceable(run_type="llm", name="ollama_fast.summarize_history")
+    async def summarize_history(self, previous: dict | None, messages: list[dict]) -> tuple[dict, dict]:
+        from .memory import SUMMARY_SCHEMA, summary_input
+        payload = {"model":self.model,"messages":[{"role":"system","content":self.config.prompts['summarize_history']},
+                   {"role":"user","content":summary_input(previous,messages)}],
+                   "think":False,"stream":False,"format":SUMMARY_SCHEMA,"options":{"temperature":0.0}}
+        # async 요청이어야 상위 요약 timeout/연결 취소가 실제 전송에도 전달된다.
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.post(OLLAMA_URL,json=payload)
+            response.raise_for_status()
+            data = response.json()
+        tokens = (data.get('prompt_eval_count') or 0)+(data.get('eval_count') or 0)
+        return json.loads(data['message']['content']), {"model":self.name,"tokens":tokens,
+                "usd":round(tokens/1000*self.usd_per_1k,6)}
+
     @traceable(run_type="llm", name="ollama_fast.chat")
-    async def chat(self, query: str, history: list[dict], on_token=None) -> tuple[str, dict]:
+    async def chat(self, query: str, history: list[dict], on_token=None, history_context=None) -> tuple[str, dict]:
         system = self.config.prompts['chat']
-        rendered = "\n".join(f"{m['role']}: {m['content']}" for m in history[-10:])
+        from .memory import render_history
+        rendered = render_history(history, history_context)
         user = (f"## 지금까지의 대화\n{rendered or '(없음)'}\n\n"
                 f"## 사용자의 새 메시지\n{query}")
         return await self._chat_stream(system, user, on_token=on_token)

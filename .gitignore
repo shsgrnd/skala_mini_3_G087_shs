@@ -46,6 +46,7 @@ requirements-dev.txt
 
 !/tests/test_research_subgraphs.py
 !/tests/test_log_source.py
+!/tests/test_memory_summary.py
 
 # Public runtime defaults only; other local config stays private.
 /config/*

@@ -354,3 +354,54 @@ RunbookAgent가 MCP Resource를 읽는다. 같은 요청에서 완료·실패한
 MCP 잠금은 유지되어 Tool/Resource 요청 자체는 직렬이다. specialist 병렬 실행만으로 속도 향상을
 단정할 수 없으며, `latency_ms`·`mcp_wait_ms`·`mcp_service_ms`를 구분해 확인한다.
 롤백은 `RESEARCH_STRATEGY=legacy`로 변경 후 재시작한다.
+
+
+## 장기 대화 요약 메모리 (S4)
+
+기본 `MEMORY_MODE=recent`는 기존 최근 10개 메시지 입력을 유지한다. `summary`는 v2에서만
+사용하며 원본 `messages`를 삭제하지 않고 같은 SQLite 파일의 `thread_summaries`에 과거 요약을 저장한다.
+기존 DB에는 서버 시작 시 테이블만 추가한다. DB를 지우는 실행 스크립트 대신 직접 실행하면 이력을 보존할 수 있다.
+
+```bash
+MEMORY_MODE=summary OLLAMA_FAST_MODEL=qwen3:8b LLM_BACKEND=ollama SUPERVISOR_VERSION=v2 .venv/bin/python server.py
+```
+
+설치된 로컬 `qwen3:8b`에서 구조화 요약을 확인했다. 기본 fast 모델 `qwen3:0.6b`는 빈 요약을
+반환할 수 있어 동일한 품질을 기대하면 안 된다. 빈 요약·잘못된 JSON·timeout은 최근 10개 원문으로
+fallback하며 체크포인트를 전진시키지 않는다. 근거 ID는 원문의 `[ID]` 인용 또는 이전 요약에 있는 값만 보존한다.
+유효한 JSON이라도 다른 내용의 의미 누락·왜곡 가능성은 남는다.
+OpenAI 어댑터도 같은 계약을 구현하지만 원격 호출에는 해당 계정 비용이 발생한다.
+
+`config/agent.json`의 `memory` 설정은 다음 의미다.
+
+| 설정 | 기본값 | 의미 |
+|---|---|---|
+| `trigger_turns` | 10 | 아직 요약하지 않은 메시지가 완료된 10턴(20개)에 도달하면 요약 |
+| `recent_messages` | 10 | 요약할 때 원문으로 남길 최근 메시지 수, 짝수이며 trigger 메시지 수보다 작아야 함 |
+| `timeout_seconds` | 30 | 요약 요청 제한 시간, 실패 시 최근 메시지 fallback |
+
+최근 원문을 제외한 과거 부분과 이전 요약만 증분 입력한다. 다음 요약 전에는 아직 요약하지 않은
+중간 메시지도 함께 전달하므로 이를 10개로 다시 잘라 버리지 않는다. 요약에는 사용자 진술·시스템명·
+수치/단위/시각·관측 ID·가설·미해결 질문·결정을 구분한다. 요약 정책은 `prompts.summarize_history`에서 수정한다.
+
+이 문맥은 일반 채팅 회상에만 사용한다. 장애 조사 대상은 현재 질문의 명시 대상만 사용하며
+과거 요약으로 strict 가드를 우회하지 않는다. 현재 운영 질문으로 인식한 요청에서는 요약 호출도 생략한다.
+
+HTTP·SSE는 응답 성공 시 메시지 쌍과 요약을 한 트랜잭션으로 저장한다. SSE는 FinalAnswer 전에
+commit하며 그 이전 오류·중단에는 요약 후보와 미완료 대화를 저장하지 않는다. 따라서 완료 후 네트워크에서
+응답이 유실되면 DB에는 완료 대화가 남을 수 있다. 같은 프로세스의 동일 thread는 직렬화하고,
+다른 프로세스의 요약 충돌은 version CAS로 오래된 덮어쓰기를 막는다. 여러 worker 간 전체 요청 순서는 보장하지 않는다.
+
+`/health`의 `memory_mode`, HTTP metadata의 `memory`, SSE의 `ConversationMemory`에서
+요약 상태·호출·토큰·추정 비용·저장 여부를 확인한다. 요약 비용도 요청 cost에 포함한다.
+실패 응답에 usage가 없으면 summary_tokens/cost는 null이고 요청 합계는 알려진 비용의 하한이다.
+토큰·비용 절감은 보장하지 않는다. 최근 10개에 요약을 추가하면 입력이 늘 수 있다.
+
+| 담당 코드 | 책임 | 함께 검증할 항목 |
+|---|---|---|
+| `agent/session_store.py` | 원문·요약 checkpoint·version 원자 저장 | 기존 DB migration, rollback, 재시작·대화방 격리 |
+| `agent/memory.py` | 증분 범위·timeout·fallback·대화별 잠금 | 최근 N·중간 메시지 보존, 취소·중복 요약 |
+| `server.py` | HTTP/SSE의 공통 준비·완료 저장 | 모델 실패·연결 중단·FinalAnswer 전 commit |
+| 모델 어댑터·`agent/graph.py` | 구조화 요약과 일반 채팅 입력 | 사실/가설 구분, strict 대상 정책 유지 |
+
+롤백은 `MEMORY_MODE=recent`로 바꾼 뒤 재시작한다. 기존 원문과 저장된 요약은 그대로 보존된다.

@@ -30,6 +30,13 @@ class RAGConfig:
 
 
 @dataclass(frozen=True)
+class MemoryConfig:
+    trigger_turns: int = 10
+    recent_messages: int = 10
+    timeout_seconds: float = 30.0
+
+
+@dataclass(frozen=True)
 class AgentConfig:
     target_resolution_mode: str
     legacy_target: str
@@ -40,6 +47,8 @@ class AgentConfig:
     rag: RAGConfig = field(default_factory=RAGConfig)
     research_strategy: str = 'legacy'
     research_timeout_seconds: float = 5.0
+    memory_mode: str = 'recent'
+    memory: MemoryConfig = field(default_factory=MemoryConfig)
 
 
 def load_config() -> AgentConfig:
@@ -57,7 +66,7 @@ def load_config() -> AgentConfig:
     prompts = data.get('prompts')
     for name in ('route_ollama', 'route_openai', 'plan_ollama', 'plan_openai',
                  'plan_strict', 'analyze', 'chat', 'write', 'missing_target', 'unknown_target',
-                 'retrieval_failed', 'retrieval_insufficient', 'write_multi'):
+                 'retrieval_failed', 'retrieval_insufficient', 'write_multi', 'summarize_history'):
         if not isinstance(prompts, dict) or not isinstance(prompts.get(name), str) or not prompts[name].strip():
             raise ValueError(f'Missing or empty prompt: {name}')
     pattern = data.get('target_required_pattern')
@@ -97,7 +106,21 @@ def load_config() -> AgentConfig:
     timeout = data.get('research_timeout_seconds', 5.0)
     if type(timeout) not in (int,float) or not math.isfinite(timeout) or not 0 < timeout <= 60:
         raise ValueError('research_timeout_seconds must be in (0, 60]')
-    return AgentConfig(mode, fallback, pattern, prompts, hashlib.sha256(content).hexdigest(), classifier, rag, strategy, timeout)
+    memory_mode = os.environ.get('MEMORY_MODE', 'recent')
+    if memory_mode not in ('recent', 'summary'):
+        raise ValueError('MEMORY_MODE must be recent or summary')
+    try:
+        memory = MemoryConfig(**data.get('memory', {}))
+    except TypeError as exc:
+        raise ValueError('Invalid memory settings') from exc
+    if (type(memory.trigger_turns) is not int or not 2 <= memory.trigger_turns <= 100
+            or type(memory.recent_messages) is not int or not 2 <= memory.recent_messages < memory.trigger_turns * 2
+            or memory.recent_messages % 2
+            or type(memory.timeout_seconds) not in (int,float)
+            or not math.isfinite(memory.timeout_seconds) or not 0 < memory.timeout_seconds <= 120):
+        raise ValueError('Invalid memory trigger_turns, recent_messages or timeout_seconds')
+    return AgentConfig(mode, fallback, pattern, prompts, hashlib.sha256(content).hexdigest(),
+                       classifier, rag, strategy, timeout, memory_mode, memory)
 
 
 def load_known_systems() -> tuple[str, ...]:

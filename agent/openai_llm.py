@@ -156,13 +156,31 @@ class OpenAIFastLLM(OpenAILLM):
             f"알림 {d['alerts']}" for d in mon) or "(모니터링 데이터 없음)"
         return self._chat(system, facts)
 
+    @traceable(run_type="llm", name="openai_fast.summarize_history")
+    async def summarize_history(self, previous: dict | None, messages: list[dict]) -> tuple[dict, dict]:
+        from .memory import summary_input
+        if not self.api_key:
+            raise RuntimeError('OPENAI_API_KEY is not configured')
+        payload = {"model":self.model,"messages":[{"role":"system","content":self.config.prompts['summarize_history']},
+                   {"role":"user","content":summary_input(previous,messages)}],
+                   "temperature":0,"response_format":{"type":"json_object"}}
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.post(OPENAI_URL,json=payload,
+                headers={"Authorization":f"Bearer {self.api_key}","Content-Type":"application/json"})
+            response.raise_for_status()
+            data = response.json()
+        tokens = data.get('usage',{}).get('total_tokens',0)
+        return json.loads(data['choices'][0]['message']['content']), {"model":self.name,"tokens":tokens,
+                "usd":round(tokens/1000*self.usd_per_1k,6)}
+
     @traceable(run_type="llm", name="openai_fast.chat")
-    async def chat(self, query: str, history: list[dict], on_token=None) -> tuple[str, dict]:
+    async def chat(self, query: str, history: list[dict], on_token=None, history_context=None) -> tuple[str, dict]:
         """ollama_llm.py와 인터페이스(on_token 콜백)만 맞춘다 — OpenAI Chat Completions를
         아직 stream=True로 호출하지 않아 토큰 단위 중계는 하지 않고 완성된 응답을 한 번에
         전달한다."""
         system = self.config.prompts['chat']
-        rendered = "\n".join(f"{m['role']}: {m['content']}" for m in history[-10:])
+        from .memory import render_history
+        rendered = render_history(history, history_context)
         user = (f"## 지금까지의 대화\n{rendered or '(없음)'}\n\n"
                 f"## 사용자의 새 메시지\n{query}")
         content, usage = self._chat(system, user)

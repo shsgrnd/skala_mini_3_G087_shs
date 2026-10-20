@@ -26,4 +26,6 @@ class SupervisorDeps:
 
     incident_retriever: Any = None
 
+    memory: Any = None
+
     research_graphs: dict = field(default_factory=dict)
