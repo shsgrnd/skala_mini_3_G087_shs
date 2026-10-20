@@ -1,0 +1,2 @@
+{"system": "cache-service", "timestamp": "2026-10-20T09:00:00", "level": "WARN", "message": "Synthetic example: cache object count growing", "evidence_id": "cache-service-sample-1", "synthetic": true}
+{"system": "cache-service", "timestamp": "2026-10-20T09:00:01", "level": "ERROR", "message": "Synthetic example: heap allocation pressure", "evidence_id": "cache-service-sample-2", "synthetic": true}

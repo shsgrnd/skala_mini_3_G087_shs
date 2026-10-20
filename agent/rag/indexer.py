@@ -1,4 +1,10 @@
-"""Build the local runbook index: python -m agent.rag.indexer."""
+"""Build the local runbook index: python -m agent.rag.indexer.
+
+팀 유지보수 메모:
+서비스 실행에 필요한 인덱스 구축 CLI다. 보고서 전용 scripts/로 옮기면 새 clone에서 실행이 깨진다.
+문서/모델/prefix fingerprint별 collection을 만들고 마지막에 manifest를 교체한다. 이전 세대는
+실패 복구를 위해 자동 삭제하지 않으며 벡터 DB와 모델 캐시는 Git에 넣지 않는다.
+"""
 import hashlib
 import json
 import os

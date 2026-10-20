@@ -1,0 +1,2 @@
+{"system": "gateway-service", "timestamp": "2026-10-20T09:00:00", "level": "WARN", "message": "Synthetic example: upstream payments-service response timed out", "evidence_id": "gateway-service-sample-1", "synthetic": true}
+{"system": "gateway-service", "timestamp": "2026-10-20T09:00:01", "level": "ERROR", "message": "Synthetic example: upstream 504 retries", "evidence_id": "gateway-service-sample-2", "synthetic": true}

@@ -1,0 +1,2 @@
+{"system": "log-service", "timestamp": "2026-10-20T09:00:00", "level": "WARN", "message": "Synthetic example: /var/log disk usage warning", "evidence_id": "log-service-sample-1", "synthetic": true}
+{"system": "log-service", "timestamp": "2026-10-20T09:00:01", "level": "ERROR", "message": "Synthetic example: log rotation deferred", "evidence_id": "log-service-sample-2", "synthetic": true}

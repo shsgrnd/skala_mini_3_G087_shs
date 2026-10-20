@@ -7,6 +7,12 @@
 - Wave 12 : 대화 이력을 SQLite(session.db)에 저장 — 재시작해도 유지
 - Wave 14 : SUPERVISOR_VERSION(v1/v2) 환경변수로 legacy/신형 파이프라인 즉시 전환
 - LangSmith: 요청당 chat_request 루트 run 아래로 노드·LLM·MCP 호출이 계층 기록됨
+
+
+팀 유지보수 메모:
+lifespan에서 설정·retriever·MCP·그래프를 조립하고 요청 간 재사용한다. v1에서 지원하지 않는
+strict/rag/multi 조합은 자원을 열기 전에 거부한다. HTTP metadata와 SSE 이벤트의 출처·실패
+정보를 함께 유지하고, 두 endpoint의 대화 저장 동작을 변경할 때 함께 검증한다.
 """
 import json
 import os
@@ -67,6 +73,8 @@ async def lifespan(app: FastAPI):
     supervisor_version = os.environ.get('SUPERVISOR_VERSION', 'v2')
     if config.target_resolution_mode == 'strict' and supervisor_version != 'v2':
         raise ValueError('TARGET_RESOLUTION_MODE=strict requires SUPERVISOR_VERSION=v2')
+    if config.research_strategy == 'multi' and supervisor_version != 'v2':
+        raise ValueError('RESEARCH_STRATEGY=multi requires SUPERVISOR_VERSION=v2')
     incident_retriever = None
     if config.incident_classifier == 'rag':
         if supervisor_version != 'v2':
@@ -112,6 +120,7 @@ async def health():
             "target_resolution_mode": app.state.deps.config.target_resolution_mode,
             "config_sha256": app.state.deps.config.sha256,
             "incident_classifier": app.state.deps.config.incident_classifier,
+            "research_strategy": app.state.deps.config.research_strategy,
             "rag_index_fingerprint": (app.state.deps.incident_retriever.identity['fingerprint']
                                       if app.state.deps.incident_retriever else None),
             "fast_llm": app.state.deps.fast_llm.name,
@@ -128,6 +137,10 @@ def _metadata(result: dict, run_id: str | None) -> dict:
         "route": result.get("route"),
         "incident_classifier": app.state.deps.config.incident_classifier,
         "retrieval": result.get("retrieval"),
+        "research_strategy": app.state.deps.config.research_strategy,
+        "research_status": result.get("research_status"),
+        "research_results": result.get("research_results", []),
+        "evidence": result.get("evidence", []),
         "target_resolution_mode": app.state.deps.config.target_resolution_mode,
         "target_resolution": result.get('target_resolution'),
         "config_sha256": app.state.deps.config.sha256,

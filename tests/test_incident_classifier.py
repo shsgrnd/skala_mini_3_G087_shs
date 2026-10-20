@@ -1,3 +1,5 @@
+"""서비스 단위 테스트: 외부 계정·실모델·ignored scripts 없이 실행되어야 한다.
+"""
 import asyncio
 from dataclasses import replace
 from unittest.mock import Mock

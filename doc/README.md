@@ -308,3 +308,49 @@ HTTP metadata와 SSE `RunbookRetrieval` 이벤트에 후보·출처·점수·모
 자주 문서를 변경하는 환경에서는 사용 중이지 않은 세대의 정리 정책이 추가로 필요하다.
 
 롤백은 `INCIDENT_CLASSIFIER=keyword`로 변경 후 재시작한다. 원본 런북과 세션 DB는 유지된다.
+
+
+## 전문 조사 모드와 팀 유지보수
+
+`RESEARCH_STRATEGY=legacy`가 기본값이며, `multi`는 v2에서만 동작한다. 인덱스를 구축했다면
+아래처럼 기존 서버를 종료한 뒤 실행한다. 설정 변경에는 재시작이 필요하다.
+
+```bash
+TARGET_RESOLUTION_MODE=strict INCIDENT_CLASSIFIER=rag RESEARCH_STRATEGY=multi LLM_BACKEND=ollama SUPERVISOR_VERSION=v2 .venv/bin/python server.py
+```
+
+| 담당 코드 | 책임 | 수정 시 함께 확인할 경계 |
+|---|---|---|
+| `agent/config.py`, `config/agent.json` | 모드·프롬프트·검색/조사 정책 검증 | 환경변수/JSON 예시, health와 요청 metadata |
+| `agent/target_resolver.py` | 명시한 시스템만 허용 | planner 정규화와 research 직전 가드 |
+| `agent/research/metric_graph.py` | 지표 Tool과 수치·시각 검증 | 응답 시스템명, 단위, synthetic 표시 |
+| `agent/research/log_graph.py`, `agent/log_source.py` | 읽기 전용 로그 Tool과 근거 ID | 경로 제한, 시스템명, 합성 여부, 시간 형식 |
+| `agent/research/runbook_graph.py`, `agent/rag/` | 검색 후보 선택 후 MCP 본문 확인 | 인덱스 노후화, URI·문서 위치, 문서 없음 처리 |
+| `agent/research/supervisor.py` | fan-out/fan-in, 중복 수집 방지, 근거 통합 | `(agent,target)` 종료 상태, 시각 불일치, 부분 실패 |
+| `agent/research/common.py` | timeout/retry, 근거 envelope, 모델 입력 길이 제한 | 원본 근거를 보존하고 입력 사본만 제한 |
+| `agent/graph.py` | 상위 계획·조사·재계획·분석·작성 | HTTP/SSE 종료와 최대 재계획 횟수 |
+| `agent/mcp_client.py` | stdio 세션·직렬화 잠금·호출별 시간 계측 | 대기 취소, Tool 오류를 근거로 오인하지 않기 |
+| `agent/*_llm.py` | fake/Ollama/OpenAI 어댑터 | 공통 인터페이스, 출처 전달, 토큰 callback/사용량 |
+
+세 specialist는 각각 독립 State와 수집→해석/skip 경로를 가진 compiled StateGraph다.
+첫 조사에서는 지표와 로그를 수집하고, 런북이 부족하면 기존 replan에서 유형을 고른 뒤
+RunbookAgent가 MCP Resource를 읽는다. 같은 요청에서 완료·실패한 `(agent,target)`은 다시 조회하지 않는다.
+각 수집 시도의 제한 시간은 `research_timeout_seconds`(초, 기본 5)이고, 일시 timeout은 최대 3회 시도한다.
+
+`data/logs/*.jsonl`은 실제 운영 로그가 아닌 합성 예시다. 현재 monitoring Tool도 JSON+jitter 기반의
+데모 지표여서 `synthetic=true`를 반환한다. 실제 수집 시스템을 연결할 때는 이 표시와 Tool 응답 검증을
+함께 변경해야 한다. Runbook은 참고 문서이며 조치 수행의 증거가 아니다.
+
+출처는 `id/source/system/timestamp/payload/synthetic`으로 보존한다. HTTP metadata의 `evidence`,
+`research_results`, `research_status`와 SSE의 `MetricResearch`·`LogResearch`·`RunbookResearch`·
+`ResearchAggregate`에서 성공/부분/실패/skip을 확인한다. 로그와 지표의 시각이 다르거나 시간대가
+비교 불가능하면 상관관계를 확정할 수 없다는 경고를 남긴다.
+
+일부 출처가 실패하면 성공한 근거로 만든 부분 보고서를 반환한다. 이때 최종 작성 모델이 빈 근거를
+추측으로 채우지 않도록 코드가 검증된 내용만 정리한다. 지표가 없으면 수치를 만들거나 `db-down`으로
+런북을 추측하지 않는다. 모든 출처가 성공한 경우에도 합성/실제 구분과 미실행 권고를 명시한다.
+모델의 모든 진단 문장이 정확하다는 보장은 없으므로 실제 운영 연결 전 별도 품질 평가가 필요하다.
+
+MCP 잠금은 유지되어 Tool/Resource 요청 자체는 직렬이다. specialist 병렬 실행만으로 속도 향상을
+단정할 수 없으며, `latency_ms`·`mcp_wait_ms`·`mcp_service_ms`를 구분해 확인한다.
+롤백은 `RESEARCH_STRATEGY=legacy`로 변경 후 재시작한다.

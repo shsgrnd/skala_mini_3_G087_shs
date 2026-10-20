@@ -7,6 +7,12 @@ FastAPI 백엔드(server.py)가 lifespan에서 이 파일을 subprocess(stdio)�
 - Tool    get_monitoring_status : 호출마다 값이 달라지는 동적 조회 → Tool이 맞다
 - Resource runbook://incident-response/{incident_type} : URI로 식별되는 정적 문서
 - Prompt  incident_analysis_prompt : 여러 Tool을 조합하는 표준 진단 절차를 강제
+
+
+팀 유지보수 메모:
+monitoring은 JSON+무작위 jitter로 만든 데모 지표이고 logs는 명시적인 합성 예시다.
+실제 모니터링/로그 시스템을 연결할 때 synthetic 출처 표시도 함께 갱신해야 한다.
+새 읽기 Tool을 추가할 때 known-system 검증과 경로 제한을 우회하지 않는다.
 """
 import json
 import random
@@ -15,6 +21,7 @@ from pathlib import Path
 
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
+from agent.log_source import read_recent_logs
 
 mcp = FastMCP(name="capstone-all-total-ops")
 
@@ -22,6 +29,7 @@ DATA_DIR = Path(__file__).parent / "data"
 
 
 class SystemStatus(BaseModel):
+    synthetic: bool = Field(default=True, description="Demo monitoring.json with simulated jitter, not live telemetry")
     system_name: str = Field(description="시스템 이름")
     status: str = Field(description="상태: healthy / degraded / down")
     cpu_percent: float = Field(description="CPU 사용률 (%)")
@@ -53,10 +61,18 @@ def get_monitoring_status(system_name: str) -> SystemStatus:
     )
 
 
+@mcp.tool()
+def get_recent_logs(system_name: str, limit: int = 20) -> dict:
+    """Read synthetic log examples for a registered system; never reads arbitrary paths."""
+    return read_recent_logs(system_name, limit)
+
+
 @mcp.resource("runbook://incident-response/{incident_type}")
 def get_incident_runbook(incident_type: str) -> str:
     """특정 incident 유형의 runbook(정적 문서)을 반환합니다."""
     runbook_path = DATA_DIR / "runbooks" / f"{incident_type}.md"
+    if runbook_path.resolve().parent != (DATA_DIR / "runbooks").resolve():
+        raise ValueError("Invalid runbook path")
     if not runbook_path.exists():
         return f"# Runbook Not Found\n\nNo runbook for incident type: {incident_type}"
     return runbook_path.read_text()

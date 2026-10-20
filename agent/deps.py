@@ -3,6 +3,11 @@
 노드 함수가 closure의 지역 변수에 암묵적으로 기대지 않도록, supervisor가 쓰는 모든
 의존성을 SupervisorDeps 하나에 명시적으로 담아 functools.partial로 각 노드에 주입한다.
 파일을 어디로 옮겨도, 단위 테스트에서 mock deps로 갈아 끼워도 동작이 같다.
+
+
+팀 유지보수 메모:
+서버 수명 동안 공유할 의존성만 보관한다. 연구 그래프는 v2 multi 모드에서 한 번 컴파일하고,
+요청별 근거·작업 상태는 AgentState에만 둔다. 전역 공유 객체에 요청 결과를 저장하지 않는다.
 """
 from dataclasses import dataclass, field
 from typing import Any
@@ -20,3 +25,5 @@ class SupervisorDeps:
     config: AgentConfig = field(default_factory=load_config)
 
     incident_retriever: Any = None
+
+    research_graphs: dict = field(default_factory=dict)

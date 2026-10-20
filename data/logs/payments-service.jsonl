@@ -1,0 +1,2 @@
+{"system": "payments-service", "timestamp": "2026-10-20T09:00:00", "level": "WARN", "message": "Synthetic example: repeated payment polling increased CPU", "evidence_id": "payments-service-sample-1", "synthetic": true}
+{"system": "payments-service", "timestamp": "2026-10-20T09:00:01", "level": "ERROR", "message": "Synthetic example: worker queue retry burst", "evidence_id": "payments-service-sample-2", "synthetic": true}

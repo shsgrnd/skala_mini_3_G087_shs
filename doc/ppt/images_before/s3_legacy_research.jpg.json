@@ -1,0 +1,17 @@
+{
+  "image": "s3_legacy_research.jpg",
+  "sha256": "6278269de49b81cc9546737a73964ad04e1326e7ee7c3acfbaae872c6335160c",
+  "query": "payments-service 장애 진단",
+  "research_strategy": "legacy",
+  "target_resolution_mode": "strict",
+  "incident_classifier": "keyword",
+  "llm_backend": "fake",
+  "fixture": "fixed stdio MCP; monitoring91%,memory55%,timestamp2026-10-20T09:00:00",
+  "logs": "service synthetic JSONL examples",
+  "fault": null,
+  "dimensions": [
+    1512,
+    682
+  ],
+  "note": "Actual unedited browser JPEG on isolated8101/8601 and temporary DB. Original header fake 실모델 is not real Ollama."
+}

@@ -1,0 +1,2 @@
+{"system": "auth-service", "timestamp": "2026-10-20T09:00:00", "level": "WARN", "message": "Synthetic example: connection pool waits increased", "evidence_id": "auth-service-sample-1", "synthetic": true}
+{"system": "auth-service", "timestamp": "2026-10-20T09:00:01", "level": "ERROR", "message": "Synthetic example: request waiting for database connection", "evidence_id": "auth-service-sample-2", "synthetic": true}

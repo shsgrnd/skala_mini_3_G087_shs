@@ -7,6 +7,12 @@ incident: plan(MCP Prompt 절차 반영) → gate(권위 게이트) → research
 
 모든 노드는 SupervisorDeps를 functools.partial로 주입받는 순수 함수다(Wave 13).
 각 노드는 @traceable로 LangSmith에 계층 트리로 기록된다.
+
+
+팀 유지보수 메모:
+legacy 연구 경로는 비교·롤백용으로 보존한다. multi는 research 안에서 독립 서브그래프를 호출한다.
+replan은 한 번만 추가 조사하며, monitoring 근거가 없으면 런북을 db-down으로 추측하지 않는다.
+부분 실패는 검증된 근거로 만든 보고서를 사용하여 누락된 수치·로그를 모델이 보충하지 못하게 한다.
 """
 import asyncio
 import logging
@@ -44,6 +50,9 @@ class AgentState(TypedDict, total=False):
     tasks: list[dict]
     gate_removed: int
     collected: list[dict]
+    evidence: list[dict]
+    research_results: list[dict]
+    research_status: str
     replan_rounds: int
     retry_count: int
     parallel_elapsed: float
@@ -123,8 +132,13 @@ async def plan_node(state: AgentState, deps: SupervisorDeps) -> dict:
     result, usage = deps.fast_llm.plan(state["query"], procedure)
     if deps.config.target_resolution_mode == 'strict':
         result['tasks'] = guard_monitoring_tasks(result['tasks'], state['target_resolution']['targets'])
-    targets = [t["target"] for t in result["tasks"]
-               if t["agent"] == "research" and t.get("target")]
+    if deps.config.research_strategy == 'multi':
+        systems = list(dict.fromkeys(t['target'] for t in result['tasks'] if t.get('kind')=='monitoring'))
+        result['tasks'] += [{'id':f'task-log-{system}', 'agent':'research', 'kind':'logs',
+                             'target':system, 'status':'pending'} for system in systems]
+    # 지표/로그가 같은 시스템을 조사해도 진행 화면의 대상 목록은 한 번만 표시한다.
+    targets = list(dict.fromkeys(t["target"] for t in result["tasks"]
+                                if t["agent"] == "research" and t.get("target")))
     event = {"type": "PlanCreated", "task_count": len(result["tasks"]),
              "targets": targets}
     return {"tasks": result["tasks"], "needs_analysis": result["needs_analysis"],
@@ -152,9 +166,12 @@ async def research_node(state: AgentState, deps: SupervisorDeps) -> dict:
     tasks = state["tasks"]
     if deps.config.target_resolution_mode == 'strict':
         approved = state.get('target_resolution', {}).get('targets', [])
-        if any(t.get('kind') == 'monitoring' and t.get('status') == 'pending'
+        if any(t.get('kind') in ('monitoring','logs') and t.get('status') == 'pending'
                and t.get('target') not in approved for t in tasks):
             raise ValueError('Unapproved monitoring target')
+    if deps.config.research_strategy == 'multi':
+        from .research.supervisor import research_multi
+        return await research_multi(state, deps)
     research_indices = [i for i, t in enumerate(tasks)
                         if t["agent"] == "research" and t["status"] == "pending"]
     # Wave 15 — 객체가 아니라 '실행할 목록'을 검사한다 (not research_agent 버그의 수정판)
@@ -238,6 +255,9 @@ async def replan_check_node(state: AgentState, deps: SupervisorDeps) -> dict:
     if has_runbook or rounds >= 1:
         verdict = {"type": "ReplanCheck", "round": rounds, "is_sufficient": True}
         return {"events": state["events"] + [verdict]}
+    if deps.config.research_strategy == 'multi' and not any(c['source']=='monitoring' for c in state.get('collected',[])):
+        return {'events':state['events'] + [{'type':'ReplanCheck','round':rounds,'is_sufficient':True,
+                                           'reason':'no_monitoring_evidence'}]}
     retrieval = None
     if deps.config.incident_classifier == 'rag':
         try:
@@ -268,6 +288,9 @@ async def retrieval_clarification_node(state: AgentState, deps: SupervisorDeps) 
         reply = deps.config.prompts['retrieval_failed']
     else:
         reply = deps.config.prompts['retrieval_insufficient']
+    if deps.config.research_strategy == 'multi':
+        from .research.common import evidence_report
+        reply = evidence_report(state['collected']) + '\n' + reply
     get_stream_writer()({'type': 'AnswerToken', 'delta': reply})
     return {'final': reply, 'last_prompt': None,
             'events': state['events'] + [{'type': 'Finalize', 'pipeline': 'retrieval-clarification'}]}
@@ -283,6 +306,9 @@ async def analysis_node(state: AgentState, deps: SupervisorDeps) -> dict:
     if not pending:
         return {"events": state["events"] +
                 [{"type": "AnalysisSkipped", "reason": "analysis task 0개"}]}
+    if deps.config.research_strategy == 'multi' and not any(c['source']=='monitoring' for c in state.get('collected',[])):
+        return {'tasks':[{**t, 'status':'skipped'} if t['agent']=='analysis' else t for t in tasks],
+                'events':state['events'] + [{'type':'AnalysisSkipped','reason':'no_monitoring_evidence'}]}
     summary, usage = deps.fast_llm.analyze(state.get("collected", []))
     new_tasks = [dict(t) for t in tasks]
     for t in new_tasks:
@@ -303,12 +329,24 @@ async def write_node(state: AgentState, deps: SupervisorDeps) -> dict:
     그대로 노출)."""
     attempt = state.get("validation_attempts", 0) + 1
     writer = get_stream_writer()
+    if deps.config.research_strategy == 'multi' and state.get('research_status') != 'ok':
+        from .research.common import evidence_report
+        draft = evidence_report(state.get('collected',[]))
+        writer({'type':'AnswerToken','attempt':attempt,'delta':draft})
+        return {'draft':draft,'last_prompt':None,
+                'events':state['events'] + [{'type':'DraftWritten','attempt':attempt,'length':len(draft),
+                                           'partial_evidence_fallback':True}]}
+    prefix = ''
+    if deps.config.research_strategy == 'multi':
+        from .research.common import source_notice
+        prefix = source_notice(state['collected'])
+        writer({'type':'AnswerToken','attempt':attempt,'delta':prefix})
     draft, usage = await deps.quality_llm.write(
         state["query"], state.get("collected", []),
         attempt, state.get("validation_feedback"),
         on_token=lambda piece: writer(
             {"type": "AnswerToken", "attempt": attempt, "delta": piece}))
-    return {"draft": draft, "last_prompt": usage.get("prompt"),
+    return {"draft": prefix + draft, "last_prompt": usage.get("prompt"),
             "cost_usd": _cost(state, usage),
             "events": state["events"] + [{"type": "DraftWritten", "attempt": attempt,
                                           "length": len(draft)}]}
@@ -355,6 +393,9 @@ def _after_validate(state: AgentState) -> str:
 
 
 def build_graph(deps: SupervisorDeps):
+    if deps.config.research_strategy == 'multi':
+        from .research.supervisor import build_research_graphs
+        deps.research_graphs = build_research_graphs(deps)
     g = StateGraph(AgentState)
     node = lambda fn: partial(fn, deps=deps)   # Wave 13 — 명시적 의존성 주입
     g.add_node("route", node(route_node))

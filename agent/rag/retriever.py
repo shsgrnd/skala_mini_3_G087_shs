@@ -1,4 +1,10 @@
-"""Rank runbooks; callers still fetch selected content through MCP Resource."""
+"""Rank runbooks; callers still fetch selected content through MCP Resource.
+
+팀 유지보수 메모:
+검색은 런북 유형을 제안할 뿐 최종 본문 근거를 대체하지 않는다. 실제 본문은 MCP Resource로 읽는다.
+cosine의 1-distance는 확률이 아니며 threshold와 1·2위 margin을 모두 만족할 때만 확정한다.
+문서·모델 변경이나 인덱스 본문 손상은 조용한 fallback 없이 재구축 오류로 처리한다.
+"""
 import json
 import time
 

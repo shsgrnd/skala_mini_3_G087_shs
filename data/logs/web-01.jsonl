@@ -1,0 +1,2 @@
+{"system": "web-01", "timestamp": "2026-10-20T09:00:00", "level": "INFO", "message": "Synthetic example: request served normally", "evidence_id": "web-01-sample-1", "synthetic": true}
+{"system": "web-01", "timestamp": "2026-10-20T09:00:01", "level": "INFO", "message": "Synthetic example: health check passed", "evidence_id": "web-01-sample-2", "synthetic": true}

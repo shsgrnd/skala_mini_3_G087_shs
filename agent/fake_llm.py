@@ -3,6 +3,11 @@
 실제 LLM 호출 없이도 파이프라인 전체가 결정론적으로 재현되도록, 프롬프트 내용에 따라
 정해진 응답을 돌려준다. 각 호출은 LangSmith에 run_type="llm"으로 기록되고, 문자열
 길이 기반 토큰 추정치로 비용을 계산해 상태에 누적한다 (Wave 10a의 모델 분리 근거).
+
+
+팀 유지보수 메모:
+fake는 배선·회귀 확인용이며 실제 모델 품질 평가가 아니다. legacy의 의도적인 첫 짧은 초안은
+validator 시연을 위해 남긴다. multi 응답은 수집된 근거와 실패 상태로 결정적으로 작성한다.
 """
 import re
 
@@ -105,6 +110,12 @@ class QualityLLM(FakeLLM):
 
         fake 백엔드는 실제 네트워크 호출이 없어 토큰 단위로 쪼갤 대상이 없다 —
         ollama_llm.py와 인터페이스(on_token 콜백)만 맞추고 결과를 한 번에 반환한다."""
+        if any(c['source']=='research_status' for c in collected):
+            from .research.common import evidence_report
+            draft = evidence_report(collected)
+            if on_token is not None:
+                on_token(draft)
+            return draft, self._usage(query+str(feedback), draft)
         if attempt == 1:
             draft = "재시작하면 됩니다."
             if on_token is not None:

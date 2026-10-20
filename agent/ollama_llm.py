@@ -9,6 +9,12 @@ fc
 추론이라 실제 과금은 0이지만, W10a의 모델 분리 효과를 같은 잣대로 비교하기 위함이다.
 
 사전 조건: `ollama serve` 실행 중 + `ollama pull qwen3:0.6b qwen3:8b`.
+
+
+팀 유지보수 메모:
+Qwen3의 기본 thinking이 최종 답변 없이 반복되는 현상을 재현해 두 전송 경로에서 껐다.
+_chat은 route/plan/analyze, _chat_stream은 chat/write가 공유하므로 전송 정책 변경 시 둘 다 검증한다.
+multi write는 공통 출처 렌더러를 사용하고, legacy 프롬프트·입력 형식은 비교용으로 유지한다.
 """
 import json
 import re
@@ -229,6 +235,11 @@ class OllamaQualityLLM(OllamaLLM):
             elif c["source"] == "analysis":
                 facts.append(f"- 패턴 분석: {c['data'].strip()}")
         user = f"## 사용자 요청\n{query}\n\n## 수집된 사실\n" + "\n".join(facts)
+        from .research.common import render_context
+        context = render_context(collected)
+        if context is not None:
+            system = self.config.prompts['write_multi']
+            user = f'## 사용자 요청\n{query}\n\n## 출처별 근거\n{context}'
         if feedback:
             user += f"\n\n## 이전 초안에 대한 검증 반려 사유 (반드시 반영)\n{feedback}"
         return await self._chat_stream(system, user, on_token=on_token)

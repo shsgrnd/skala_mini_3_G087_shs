@@ -10,17 +10,27 @@ decoy) 두 서버다. resource/prompt를 요청할 때는 어느 서버가 그�
 알고 있지 않다고 가정하고, find_resource_template()/find_prompt()로 연결된 서버들을
 순서대로 조회(list)해 이름이 맞는 걸 찾은 뒤에야 그 서버로 read_resource/get_prompt를
 보낸다.
+
+
+팀 유지보수 메모:
+각 specialist가 병렬로 실행돼도 하나의 MCP 요청 잠금 때문에 실제 stdio 호출은 직렬이다.
+MCP_TIMINGS는 ContextVar로 격리한 호출별 계측이며 요청 결과를 전역 누적하지 않는다.
+Tool의 오류 응답은 JSON 근거로 해석하기 전에 예외로 변환하여 부분 실패 경로로 전달한다.
 """
 import asyncio
 import json
 import os
 import sys
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, asynccontextmanager
+from contextvars import ContextVar
+from time import perf_counter
 from pathlib import Path
 
 from langsmith import traceable
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+
+MCP_TIMINGS = ContextVar('mcp_timings', default=None)
 
 SERVER_DIR = Path(__file__).parent.parent
 DEFAULT_SERVER_SCRIPTS = {
@@ -50,6 +60,22 @@ class MCPClient:
         self._lock = asyncio.Lock()
         self._flaky_pending = flaky_first_tool_call   # Wave 9 시뮬레이션
 
+    @asynccontextmanager
+    async def _timed_lock(self):
+        """stdio 요청 직렬화는 유지하고, 해당 호출 문맥에 대기/처리 시간을 기록한다."""
+        started, acquired = perf_counter(), None
+        try:
+            async with self._lock:
+                acquired = perf_counter()
+                yield
+        finally:
+            timings = MCP_TIMINGS.get()
+            if timings is not None:
+                finished = perf_counter()
+                # 대기 중 timeout/cancel이면 다른 요청의 잠금을 건드리지 않고 대기만 집계한다.
+                timings.append({'wait_ms':((acquired if acquired is not None else finished)-started)*1000,
+                                'service_ms':(finished-acquired)*1000 if acquired is not None else 0})
+
     async def start(self) -> None:
         self._stack = AsyncExitStack()
         for server_name, script in self._server_scripts.items():
@@ -72,13 +98,15 @@ class MCPClient:
         if self._flaky_pending and name == "get_monitoring_status":
             self._flaky_pending = False
             raise asyncio.TimeoutError("simulated transient timeout (Wave 9 demo)")
-        async with self._lock:
+        async with self._timed_lock():
             result = await self.sessions[server].call_tool(name, arguments)
+        if getattr(result, 'isError', getattr(result, 'is_error', False)):
+            raise RuntimeError(f'MCP tool failed: {name}')
         return json.loads(result.content[0].text)
 
     @traceable(run_type="tool", name="mcp.list_resource_templates")
     async def list_resource_templates(self, server: str) -> list:
-        async with self._lock:
+        async with self._timed_lock():
             result = await self.sessions[server].list_resource_templates()
         return _attr(result, "resourceTemplates", "resource_templates")
 
@@ -95,13 +123,13 @@ class MCPClient:
 
     @traceable(run_type="tool", name="mcp.read_resource")
     async def read_resource(self, uri: str, server: str) -> str:
-        async with self._lock:
+        async with self._timed_lock():
             result = await self.sessions[server].read_resource(uri)
         return result.contents[0].text
 
     @traceable(run_type="tool", name="mcp.list_prompts")
     async def list_prompts(self, server: str) -> list:
-        async with self._lock:
+        async with self._timed_lock():
             result = await self.sessions[server].list_prompts()
         return result.prompts
 
@@ -117,6 +145,6 @@ class MCPClient:
 
     @traceable(run_type="tool", name="mcp.get_prompt")
     async def get_prompt(self, name: str, arguments: dict, server: str = "ops") -> str:
-        async with self._lock:
+        async with self._timed_lock():
             result = await self.sessions[server].get_prompt(name, arguments)
         return result.messages[0].content.text

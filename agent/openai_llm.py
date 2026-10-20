@@ -17,6 +17,11 @@ OpenAI 계정에 실제 비용이 청구된다(run_openai.sh 실행 전 반드�
 `usd_per_1k_tokens` 하나로 통일해두기 위해 여기서도 단일 블렌디드 단가로 단순화한다.)
 
 사전 조건: 유효한 `OPENAI_API_KEY` 환경변수(.env).
+
+
+팀 유지보수 메모:
+Ollama와 동일한 서비스 인터페이스를 유지한다. multi write의 출처 입력 형식은 공통 렌더러로
+맞춘다. 여기서는 실제 과금 호출을 수행하므로 단위 테스트는 HTTP 경계에서 격리해야 한다.
 """
 import json
 import os
@@ -189,6 +194,11 @@ class OpenAIQualityLLM(OpenAILLM):
             elif c["source"] == "analysis":
                 facts.append(f"- 패턴 분석: {c['data'].strip()}")
         user = f"## 사용자 요청\n{query}\n\n## 수집된 사실\n" + "\n".join(facts)
+        from .research.common import render_context
+        context = render_context(collected)
+        if context is not None:
+            system = self.config.prompts['write_multi']
+            user = f'## 사용자 요청\n{query}\n\n## 출처별 근거\n{context}'
         if feedback:
             user += f"\n\n## 이전 초안에 대한 검증 반려 사유 (반드시 반영)\n{feedback}"
         content, usage = self._chat(system, user)

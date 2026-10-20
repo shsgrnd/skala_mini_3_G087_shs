@@ -1,4 +1,10 @@
-"""Validated, process-local settings; no secrets are included in public metadata."""
+"""Validated, process-local settings; no secrets are included in public metadata.
+
+팀 유지보수 메모:
+환경변수는 실행 모드를, config/agent.json은 프롬프트·검색·조사 정책을 담당한다.
+서버 시작 시 검증하며 변경 적용에는 재시작이 필요하다. sha256은 JSON 원본의 해시이고
+환경변수 모드는 별도 metadata로 노출한다. 비밀키는 이 설정에 넣지 않는다.
+"""
 import hashlib
 import json
 import math
@@ -32,6 +38,8 @@ class AgentConfig:
     sha256: str
     incident_classifier: str = 'keyword'
     rag: RAGConfig = field(default_factory=RAGConfig)
+    research_strategy: str = 'legacy'
+    research_timeout_seconds: float = 5.0
 
 
 def load_config() -> AgentConfig:
@@ -49,7 +57,7 @@ def load_config() -> AgentConfig:
     prompts = data.get('prompts')
     for name in ('route_ollama', 'route_openai', 'plan_ollama', 'plan_openai',
                  'plan_strict', 'analyze', 'chat', 'write', 'missing_target', 'unknown_target',
-                 'retrieval_failed', 'retrieval_insufficient'):
+                 'retrieval_failed', 'retrieval_insufficient', 'write_multi'):
         if not isinstance(prompts, dict) or not isinstance(prompts.get(name), str) or not prompts[name].strip():
             raise ValueError(f'Missing or empty prompt: {name}')
     pattern = data.get('target_required_pattern')
@@ -82,7 +90,14 @@ def load_config() -> AgentConfig:
         raise ValueError('Invalid rag model, dimension, top_k, threshold or margin')
     index_path = Path(os.environ.get('RAG_INDEX_PATH', str(rag.index_path)))
     rag = replace(rag, index_path=index_path if index_path.is_absolute() else ROOT / index_path)
-    return AgentConfig(mode, fallback, pattern, prompts, hashlib.sha256(content).hexdigest(), classifier, rag)
+    strategy = os.environ.get('RESEARCH_STRATEGY', 'legacy')
+    if strategy not in ('legacy','multi'):
+        raise ValueError('RESEARCH_STRATEGY must be legacy or multi')
+    # 초 단위의 시도별 timeout이다. 일시 오류 재시도 3회 전체 시간과는 다르다.
+    timeout = data.get('research_timeout_seconds', 5.0)
+    if type(timeout) not in (int,float) or not math.isfinite(timeout) or not 0 < timeout <= 60:
+        raise ValueError('research_timeout_seconds must be in (0, 60]')
+    return AgentConfig(mode, fallback, pattern, prompts, hashlib.sha256(content).hexdigest(), classifier, rag, strategy, timeout)
 
 
 def load_known_systems() -> tuple[str, ...]:

@@ -114,13 +114,20 @@
 <script>
 const { createApp, ref, reactive, nextTick } = Vue;
 
+// 새 출처 이벤트는 기존 SSE 토큰 처리와 분리해 진행 상태로만 표시한다.
 const STEP_LABELS = {
   PlanCreated: e => `계획 수립: 할 일 ${e.task_count}가지${e.targets?.length ? ` (시스템: ${e.targets.join(', ')})` : ''}`,
   GateApplied: e => e.removed_analysis_tasks ? `불필요한 작업 ${e.removed_analysis_tasks}건 제거` : null,
   TaskCompleted: e => (e.source === 'monitoring'
       ? `모니터링 지표 확인 (시스템: ${e.target})`
+      : e.source === 'logs' ? `합성 로그 예시 조회 (시스템: ${e.target})`
       : `대응 매뉴얼(runbook) 조회 (장애유형: ${e.target})`) + (e.retries ? ' (재시도 성공)' : ''),
-  ReplanCheck: e => e.is_sufficient ? null : `정보 부족 → 장애유형 "${e.target}"로 추가 조사`,
+  MetricResearch: e => `지표 조사: ${e.status}${e.target ? ` (${e.target})` : ''}`,
+  LogResearch: e => `합성 로그 조사: ${e.status}${e.target ? ` (${e.target})` : ''}`,
+  RunbookResearch: e => `런북 조사: ${e.status}${e.target ? ` (${e.target})` : ''}`,
+  ResearchAggregate: e => `근거 통합: ${e.status} (${e.evidence_count}개)`,
+  TaskFailed: e => `수집 실패: ${e.source} (${e.target})`,
+  ReplanCheck: e => e.is_sufficient ? null : e.abstained ? '적합한 런북을 확정할 근거 부족' : `정보 부족 → 장애유형 "${e.target}"로 추가 조사`,
   DraftWritten: e => `답변 초안 작성 (시도 ${e.attempt})`,
   Validation: e => e.verdict === '합격' ? '검수 통과' : '검수 반려 → 다시 작성',
   Finalize: () => '최종 답변 완성',

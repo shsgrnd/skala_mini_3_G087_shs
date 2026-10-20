@@ -1,4 +1,9 @@
-"""Target policy shared by the graph and all planners."""
+"""Target policy shared by the graph and all planners.
+
+팀 유지보수 메모:
+known systems의 단일 기준은 data/monitoring.json이다. strict는 명시한 이름만 허용하고
+이전 대화나 유사 이름으로 추측하지 않는다. planner 보정과 Tool 호출 직전 검증을 함께 유지해야 한다.
+"""
 import re
 from .config import ROOT, load_config, load_known_systems
 
