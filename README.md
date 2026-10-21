@@ -1,3 +1,5 @@
+**G087 신형섭**
+
 # 운영 인시던트 대응 에이전트
 
 기존 서비스의 FastAPI·Vue·LangGraph·MCP 구조를 유지하면서 **조회 대상의 추측을 막고, 런북을 의미로 검색하며, 조사 근거와 대화 기억을 검증 가능한 형태로 관리**했다. 기능 추가뿐 아니라 같은 입력의 비교와 실패 사례를 함께 남겼다.
@@ -12,7 +14,9 @@
 | [통합 검증 상세](doc/ppt/s6_integration_report.md) / [비교 CSV](doc/ppt/s6_comparison.csv) | 조건과 분모를 구분한 검증 결과 |
 | [Judge 평가 상세](doc/ppt/s5_evaluation_report.md) / [한계](doc/ppt/limitations.md) | 평가기 자체 검증과 미해결 문제 |
 
-## 1. 문제 정의와 개선 범위
+## 1. 진행 사항과 개선 범위
+
+**선택 과제: 과제 1 — 기존 Base AI Agent 개선.** 추가·수정 task는 **#1 RAG, #3 Research 멀티 에이전트, #5 메모리, #6 LLM-as-a-Judge, #7 하드코딩 개선**이다. 기존 API·UI·MCP 연결을 기반으로 대상 정책, 조사·검색, 대화 기억과 평가 기능을 확장했다.
 
 운영 진단 에이전트는 자연스러운 답변보다 **어떤 시스템을 실제로 조회했는지, 어떤 근거로 판단했는지**가 먼저 확인되어야 한다. 기존 구현을 분석하며 다음 다섯 문제를 개선 대상으로 정했다.
 
@@ -90,6 +94,36 @@ flowchart LR
 
 Judge 입력에는 질문·실제 근거·저장 답변·주장 목록을 넣고 정답 레이블과 버전명은 숨겼다. JSON 스키마와 주장/근거 ID를 검증하고, 입력·rubric·모델 digest·옵션 기준 캐시를 사용했다. 실패·예산 초과·신뢰할 수 없는 입력은 **0점 대신 `unscored`**다. 사람이 확인한 네 범주와 반복 판정을 대조했지만, 이 표본만으로 평가기의 일반 정확성을 주장하지 않는다.
 
+### 3.6 Graph·MCP·RAG의 실제 구현 위치
+
+메인 그래프는 기존 흐름을 확장하고, 전문 조사 그래프와 검색기를 의존성으로 주입한다. 아래는 실제 코드의 연속 구간 발췌다.
+
+**Agent Graph — [agent/graph.py](agent/graph.py):** 조사 후 근거가 충분하면 분석, 부족하면 추가 조사, 검색 보류 시 확인 요청으로 분기한다. `build_research_graphs()`와 `research_multi()`는 [조사 Supervisor](agent/research/supervisor.py)에서 전문 그래프 구성·실행·결과 통합을 담당한다.
+
+```python
+    g.add_edge("plan", "gate")
+    g.add_edge("gate", "research")
+    g.add_edge("research", "replan_check")
+    g.add_conditional_edges("replan_check", _after_replan_check,
+                            {"analysis": "analysis", "research": "research", "retrieval_clarification": "retrieval_clarification"})
+```
+
+**MCP — [agent/research/runbook_graph.py](agent/research/runbook_graph.py):** 검색 결과의 장애 유형을 Resource URI에 넣어 런북 본문을 조회한다. 새 로그 Tool 호출과 응답 검증은 [LogAgent](agent/research/log_graph.py), 공통 세션·잠금·다중 서버 탐색은 [MCPClient](agent/mcp_client.py)에 있다.
+
+```python
+            server, template = await deps.mcp.find_resource_template('get_incident_runbook')
+            uri = template.format(incident_type=target)
+            body = await deps.mcp.read_resource(uri,server=server)
+```
+
+**RAG — [agent/rag/retriever.py](agent/rag/retriever.py):** 모니터링의 `status/alerts`를 검색 질의로 만들고, 점수와 1·2위 차이를 함께 확인한다. 채택된 유형은 `replan_check_node()`의 gap task로 전달되어 MCP 본문 조회로 이어진다.
+
+```python
+def decide(candidates: list[dict], threshold: float, margin: float) -> bool:
+    return bool(candidates and candidates[0]['score'] >= threshold
+                and (len(candidates) == 1 or candidates[0]['score'] - candidates[1]['score'] >= margin))
+```
+
 ## 4. Before / After 실측
 
 **표의 각 행은 별도 실험이다.** 같은 행의 전후는 입력·모델·도구 조건을 맞췄으며, 서로 다른 행의 분모나 비용을 합치지 않았다.
@@ -139,7 +173,7 @@ PASS는 해당 테스트의 계약이 충족됐다는 뜻이다. 모든 진단 �
 
 과거 측정 래퍼는 원본 CPU 91%를 먼저 기록한 뒤 복사본을 10%로 바꿔 서비스에 전달했다. 답변의 10%를 기록된 91%와 비교하면 잘못 채점하므로 과거 감사 1행은 `unscored`로 보존했다. Judge도 호출하지 않았고, 임의로 0점을 부여하거나 원본을 보정하지 않았다. 별도 동일 조건 S2 재생은 정상 평가했다.
 
-## 6. 기술 구성과 구현
+## 6. 사용한 기술 요소와 구현
 
 | 기술 요소 | 실제 적용과 구분 |
 |---|---|
@@ -205,15 +239,59 @@ LANGSMITH_TRACING=false LANGCHAIN_TRACING_V2=false \
 
 공개 저장소에는 서비스 구현·설정·단위 테스트와 검증 문서를 포함한다. 별도 벤치마크·오프라인 평가 도구·통합 테스트 및 원시 trace는 포함하지 않으므로, 공개 단위 테스트만으로 전체 개발 검증을 재현할 수는 없다.
 
-## 9. 동작 화면
+## 9. 구현 기능과 최종 실행 화면
 
-Qwen 8B·strict·RAG·multi·summary를 함께 적용한 별도 서버에서 실제 Vue 진단 완료와 미등록 대상 차단을 확인했다. 화면의 근거는 합성이며 제안은 실행하지 않았다.
+전후 화면은 각 기능의 실제 브라우저 캡처다. 서로 다른 기능의 입력·모델·분모는 합산하지 않는다. S1–S3 화면 상단의 `fake 실모델` 문구는 기존 UI의 부정확한 표기이며 **LLM은 fake**다. S4와 최종 통합 화면은 **실제 Qwen 8B**다.
 
-![통합 진단과 근거·한계 표시](doc/ppt/images_after/s6_qwen_integration.jpg)
+### 9.1 대상 정책: 미등록 시스템 조회 차단
 
-![미등록 대상 조회 차단](doc/ppt/images_after/s6_qwen_target_guard.jpg)
+같은 입력 `billing-service 장애 진단`, fake·고정 모니터링 조건이다. 전후 화면에서 미등록 대상을 다른 시스템으로 대체하던 흐름과 strict 확인 요청을 비교한다. §4의 2/2→0/2는 별도 운영 2사례 집계이며 아래 화면은 그중 한 입력의 동작 예다.
 
-## 10. 후속 검증 계획
+![대상 정책 개선 전](doc/ppt/images_before/s0_unknown_target.jpg)
+
+![대상 정책 개선 후](doc/ppt/images_after/s1_unknown_target.jpg)
+
+### 9.2 RAG: 같은 한국어 증상으로 런북 선택
+
+같은 질문 `payments-service 장애 진단`, 합성 CPU 96.2%·알림 `프로세서 사용률 급증`, strict·fake 조건에서 분류기만 keyword/RAG로 바꿨다. keyword는 `db-down`, RAG는 `cpu-spike`를 선택했다. 임베딩은 실제 E5다. 이 한 쌍은 §4의 held-out 6문항 정확도와 별도 화면 사례다.
+
+![키워드 분류 화면](doc/ppt/images_before/s2_keyword_cpu_ko.jpg)
+
+![RAG 분류 화면](doc/ppt/images_after/s2_rag_cpu_ko.jpg)
+
+### 9.3 전문 조사: 출처와 부분 실패 표시
+
+같은 질문 `payments-service 장애 진단`, 고정 stdio MCP·합성 CPU 91%·fake 조건에서 legacy/multi 조사를 비교했다. 지표·런북에 합성 로그 출처가 추가된다. 추가 화면은 로그 수집 실패를 실제 운영 로그 이상으로 해석하지 않고 부분 실패로 표시하는 동작이다.
+
+![단일 조사 화면](doc/ppt/images_before/s3_legacy_research.jpg)
+
+![전문 조사 화면](doc/ppt/images_after/s3_multi_research.jpg)
+
+![로그 부분 실패 표시](doc/ppt/images_after/s3_partial_log_failure.jpg)
+
+### 9.4 요약 메모리: 고정 이력에서 사실 회수
+
+실제 Qwen 8B·고정 chat 라우팅·같은 12턴 이력에서 `앞서 말한 제 이름만 답해 주세요.`를 요청했다. recent는 `김민호`, summary는 원래 이름 `민수`를 답했다. §4의 5문항 집계 중 이름 회수 화면이며, 실제 라우팅 전체의 일반 성공률을 뜻하지 않는다. 토큰 증가와 새 Qwen 기억 실패 2건은 §4–5에 함께 기록했다.
+
+![최근 원문 메모리 화면](doc/ppt/images_before/s4_recent_memory.jpg)
+
+![증분 요약 메모리 화면](doc/ppt/images_after/s4_summary_memory.jpg)
+
+### 9.5 최종 통합 실행
+
+별도 격리 서버에서 실제 Qwen 8B·strict·RAG·multi·summary를 함께 적용했다. Vue SSE 진단 완료와 근거·합성 여부·한계·미실행 권고 표시를 확인했다. 미등록 `ghost-service` 조회 차단도 확인했다. 최종 통합 화면은 위 고정 fixture 비교와 다른 조건이므로 지연이나 품질을 직접 비교하지 않는다.
+
+![최종 통합 진단과 근거·한계 표시](doc/ppt/images_after/s6_qwen_integration.jpg)
+
+![최종 미등록 대상 조회 차단](doc/ppt/images_after/s6_qwen_target_guard.jpg)
+
+## 10. 구현에서 확인한 개선 포인트
+
+전문 그래프를 나누면 수집 책임과 실패 원인을 추적하기 쉬워지지만, MCP 세션 잠금으로 실제 I/O가 직렬이므로 구조 분리 자체를 속도 개선으로 볼 수는 없었다. 요약의 형식·근거 ID 검사를 통과해도 초기 사실의 의미 보존이 보장되지 않았다. Judge가 모든 단계에 같은 점수를 준 결과도 있어, 모델 점수와 정책·출처 검사를 함께 확인해야 했다.
+
+우선 개선할 항목은 **요약 의미 보존·회상 실패 재현 집합 확대**, **실제 운영 로그 연동**, **MCP 병목과 동일 조건 지연 계측**, **독립 모델을 통한 Judge 교차 검증**이다. 현재는 합성 데이터와 작은 평가 집합 범위에서만 결과를 해석한다.
+
+### 후속 모델 검증 계획
 
 1. Qwen 결과와 실패 사례를 보존한다.
 2. **같은 저장 답변·근거·rubric으로 Judge만 OpenAI로 교체**해 사람 판정 일치와 평가 차이를 확인한다.
