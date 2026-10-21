@@ -57,3 +57,6 @@ requirements-dev.txt
 
 # Service unit test: SSE disconnect propagation (API and proxy)
 !/tests/test_stream_disconnect.py
+
+# Service unit tests: cancellable OpenAI chat/write transport
+!/tests/test_openai_async.py

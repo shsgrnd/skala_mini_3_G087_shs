@@ -131,10 +131,10 @@ def test_real_adapter_sends_summary_without_dropping_uncompacted_messages(monkey
     else:
         from agent.openai_llm import OpenAIFastLLM
         llm=OpenAIFastLLM('unit',0)
-        def send(system,user,**kwargs):
+        async def send(system,user,**kwargs):
             captured['user']=user
             return '답', {'usd':0}
-        monkeypatch.setattr(llm,'_chat',send)
+        monkeypatch.setattr(llm,'_achat',send)
     summary=empty_summary(); summary['decisions']=['승인 후 재시작']
     history=[{'role':'user','content':f'old-{i}'} for i in range(15)]
     asyncio.run(llm.chat('지금 질문',history,history_context=summary))

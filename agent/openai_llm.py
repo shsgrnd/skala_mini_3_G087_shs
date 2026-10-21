@@ -79,6 +79,25 @@ class OpenAILLM:
         return content, usage
 
 
+    async def _achat(self, system: str, user: str) -> tuple[str, dict]:
+        """답변 대기는 이벤트 루프를 비우고 취소 시 HTTP 연결도 정리한다."""
+        if not self.api_key:
+            raise RuntimeError('OPENAI_API_KEY가 설정되지 않았습니다')
+        payload = {'model': self.model, 'messages': [
+            {'role': 'system', 'content': system}, {'role': 'user', 'content': user}],
+            'temperature': 0}
+        # 스레드에서 동기 요청을 계속 실행하지 않도록 실제 전송 자체를 await한다.
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.post(OPENAI_URL, json=payload,
+                headers={'Authorization': f'Bearer {self.api_key}', 'Content-Type': 'application/json'})
+            response.raise_for_status()
+            data = response.json()
+        tokens = data.get('usage', {}).get('total_tokens', 0)
+        return data['choices'][0]['message']['content'], {
+            'model': self.name, 'tokens': tokens,
+            'usd': round(tokens / 1000 * self.usd_per_1k, 6)}
+
+
 class OpenAIFastLLM(OpenAILLM):
     """분류·계획·단순 대화 전담 (저비용 모델, 기본 gpt-4o-mini)."""
 
@@ -176,14 +195,14 @@ class OpenAIFastLLM(OpenAILLM):
     @traceable(run_type="llm", name="openai_fast.chat")
     async def chat(self, query: str, history: list[dict], on_token=None, history_context=None) -> tuple[str, dict]:
         """ollama_llm.py와 인터페이스(on_token 콜백)만 맞춘다 — OpenAI Chat Completions를
-        아직 stream=True로 호출하지 않아 토큰 단위 중계는 하지 않고 완성된 응답을 한 번에
-        전달한다."""
+        비동기 HTTP로 응답을 기다리며 취소를 전파한다. stream=True는 사용하지 않아
+        완성된 응답을 한 번에 전달한다."""
         system = self.config.prompts['chat']
         from .memory import render_history
         rendered = render_history(history, history_context)
         user = (f"## 지금까지의 대화\n{rendered or '(없음)'}\n\n"
                 f"## 사용자의 새 메시지\n{query}")
-        content, usage = self._chat(system, user)
+        content, usage = await self._achat(system, user)
         usage["prompt"] = f"[SYSTEM]\n{system}\n\n[USER]\n{user}"
         if on_token is not None:
             on_token(content)
@@ -197,8 +216,8 @@ class OpenAIQualityLLM(OpenAILLM):
     async def write(self, query: str, collected: list[dict], attempt: int,
               feedback: str | None, on_token=None) -> tuple[str, dict]:
         """ollama_llm.py와 인터페이스(on_token 콜백)만 맞춘다 — OpenAI Chat Completions를
-        아직 stream=True로 호출하지 않아 토큰 단위 중계는 하지 않고 완성된 응답을 한 번에
-        전달한다."""
+        비동기 HTTP로 응답을 기다리며 취소를 전파한다. stream=True는 사용하지 않아
+        완성된 응답을 한 번에 전달한다."""
         system = self.config.prompts['write']
         facts = []
         for c in collected:
@@ -219,7 +238,7 @@ class OpenAIQualityLLM(OpenAILLM):
             user = f'## 사용자 요청\n{query}\n\n## 출처별 근거\n{context}'
         if feedback:
             user += f"\n\n## 이전 초안에 대한 검증 반려 사유 (반드시 반영)\n{feedback}"
-        content, usage = self._chat(system, user)
+        content, usage = await self._achat(system, user)
         usage["prompt"] = f"[SYSTEM]\n{system}\n\n[USER]\n{user}"
         if on_token is not None:
             on_token(content)
