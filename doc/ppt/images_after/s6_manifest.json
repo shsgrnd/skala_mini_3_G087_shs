@@ -1,0 +1,16 @@
+{
+  "date": "2026-10-21",
+  "backend": "ollama",
+  "fast_model": "qwen3:8b",
+  "quality_model": "qwen3:8b",
+  "target_resolution_mode": "strict",
+  "incident_classifier": "rag",
+  "research_strategy": "multi",
+  "memory_mode": "summary",
+  "server": "isolated localhost test ports 8127/8627",
+  "data": "Repository synthetic monitoring/logs, actual MCP, temporary test DB",
+  "files": {
+    "s6_qwen_integration.jpg": "Vue SSE 진단 완료·합성 근거·미실행 권고 표시",
+    "s6_qwen_target_guard.jpg": "미등록 대상 ghost-service 조회 차단"
+  }
+}

@@ -17,7 +17,8 @@ from pathlib import Path
 import httpx
 import uvicorn
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse
+from agent.streaming import DisconnectAwareStreamingResponse
 
 BACKEND = "http://127.0.0.1:8100"
 HERE = Path(__file__).parent
@@ -57,7 +58,7 @@ async def proxy_stream(message: str, thread_id: str = "web-demo"):
                 async for chunk in upstream.aiter_bytes():
                     yield chunk
 
-    return StreamingResponse(relay(), media_type="text/event-stream")
+    return DisconnectAwareStreamingResponse(relay(), media_type="text/event-stream")
 
 
 if __name__ == "__main__":

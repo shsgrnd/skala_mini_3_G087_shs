@@ -405,3 +405,41 @@ commit하며 그 이전 오류·중단에는 요약 후보와 미완료 대화�
 | 모델 어댑터·`agent/graph.py` | 구조화 요약과 일반 채팅 입력 | 사실/가설 구분, strict 대상 정책 유지 |
 
 롤백은 `MEMORY_MODE=recent`로 바꾼 뒤 재시작한다. 기존 원문과 저장된 요약은 그대로 보존된다.
+
+
+## 전체 기능 조합 실행과 검증 결과 (S6)
+
+로컬 Qwen 8B로 strict 대상 가드·RAG·multi 조사·summary를 함께 사용할 수 있다.
+가상환경·Ollama 모델·런북 인덱스를 앞 절의 안내에 따라 준비한 뒤 실행한다.
+기존 서버가 같은 포트를 사용 중이면 해당 서버를 정상 종료한 뒤 실행한다.
+
+```bash
+TARGET_RESOLUTION_MODE=strict SUPERVISOR_VERSION=v2 LLM_BACKEND=ollama \
+INCIDENT_CLASSIFIER=rag RESEARCH_STRATEGY=multi MEMORY_MODE=summary \
+OLLAMA_FAST_MODEL=qwen3:8b OLLAMA_QUALITY_MODEL=qwen3:8b \
+.venv/bin/python server.py
+```
+
+다른 터미널에서 `.venv/bin/python web_demo_server.py`를 실행하고
+`http://localhost:8600`에서 사용한다. 상태는 `http://localhost:8100/health`에서 확인한다.
+기본 모드나 `.env`를 자동 변경하지 않으며 위 명령으로 실행한 프로세스에만 설정이 적용된다.
+
+서비스 단위 테스트는 `requirements.txt`와 pytest가 설치된 가상환경에서 실행한다.
+실행 중인 서버의 모드가 테스트 기준선에 섞이지 않도록 테스트 프로세스의 초기 모드를 명시한다.
+각 기능 테스트는 필요한 설정을 자체적으로 덮어쓴다.
+
+```bash
+TARGET_RESOLUTION_MODE=legacy INCIDENT_CLASSIFIER=keyword \
+RESEARCH_STRATEGY=legacy MEMORY_MODE=recent \
+LANGSMITH_TRACING=false LANGCHAIN_TRACING_V2=false \
+.venv/bin/python -m pytest -q tests
+```
+
+[S6 통합 검증 보고서](ppt/s6_integration_report.md) · [단계 비교 CSV](ppt/s6_comparison.csv) ·
+[평가 결과](ppt/s5_evaluation_report.md) · [검증 한계](ppt/limitations.md)
+
+S6에서 토큰 응답 대기 중 클라이언트 연결 종료가 API·프록시·내부 그래프로 전파되도록 수정했다.
+미완료 대화와 요약 후보는 저장하지 않으며 완료 응답의 저장 경계는 기존과 같다.
+Qwen 8B도 일부 대화에서 잘못된 요약 근거 ID를 생성해 fallback하거나 기억을 누락할 수 있다.
+요약 모드를 원문 전체를 완벽하게 기억하는 기능으로 해석하지 않는다. 실제 실패 사례와 조건은 보고서에 기록했다.
+OpenAI 교차 검증은 후속 작업으로 남겨 두었다.

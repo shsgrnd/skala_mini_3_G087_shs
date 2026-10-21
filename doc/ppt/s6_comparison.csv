@@ -1,0 +1,7 @@
+version,source_commit,dataset,case_count,operation_count,target_misroute_count,target_misroute_rate,target_misroute_delta_pp_vs_S0,target_misroute_relative_change_pct_vs_S0,top1_accuracy,cpu_source_coverage,fake_memory_correct,fake_memory_total,cpu_groundedness_0_4,cpu_numeric_supported,cpu_numeric_total,p50_ms,p95_ms,retries,estimated_cost_usd,api_billing_usd,notes
+S0,5391cfd,matched-fake-fixed-v1,3,2,2,1.0,0.0,0.0,N/A,0.6666666666666666,1,1,4,3,3,N/A,N/A,0,0.001096,0,fake outputs + Qwen8B judge; no replay latency recorded; S5 changes evaluation only
+S1,281a8ff,matched-fake-fixed-v1,3,2,0,0.0,-100.0,-100.0,N/A,0.6666666666666666,1,1,4,2,2,N/A,N/A,0,0.000532,0,fake outputs + Qwen8B judge; no replay latency recorded; S5 changes evaluation only
+S2,bf229dd,matched-fake-fixed-v1,3,2,0,0.0,-100.0,-100.0,N/A,0.6666666666666666,1,1,4,2,2,N/A,N/A,0,0.000532,0,fake outputs + Qwen8B judge; no replay latency recorded; S5 changes evaluation only
+S3,61da43f,matched-fake-fixed-v1,3,2,0,0.0,-100.0,-100.0,N/A,1.0,1,1,4,3,3,N/A,N/A,0,0.001077,0,fake outputs + Qwen8B judge; no replay latency recorded; S5 changes evaluation only
+S4,6fde2e6,matched-fake-fixed-v1,3,2,0,0.0,-100.0,-100.0,N/A,1.0,1,1,4,3,3,N/A,N/A,0,0.001115,0,fake outputs + Qwen8B judge; no replay latency recorded; S5 changes evaluation only
+S5/final,6fde2e6,matched-fake-fixed-v1,3,2,0,0.0,-100.0,-100.0,N/A,1.0,1,1,4,3,3,N/A,N/A,0,0.001115,0,fake outputs + Qwen8B judge; no replay latency recorded; S5 changes evaluation only

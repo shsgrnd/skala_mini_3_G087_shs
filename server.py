@@ -17,14 +17,14 @@ strict/rag/multi 조합은 자원을 열기 전에 거부한다. HTTP metadata�
 import json
 import os
 import re
-from contextlib import asynccontextmanager
+from contextlib import aclosing, asynccontextmanager
 
 from dotenv import load_dotenv
 
 load_dotenv()   # LANGCHAIN_TRACING_V2 / API_KEY / PROJECT — import보다 먼저
 
 from fastapi import FastAPI
-from fastapi.responses import StreamingResponse
+from agent.streaming import DisconnectAwareStreamingResponse
 from langsmith import traceable
 from langsmith.run_helpers import get_current_run_tree
 from pydantic import BaseModel
@@ -237,20 +237,22 @@ async def chat_stream(message: str, thread_id: str = "default"):
             else:
                 seen, final, last_prompt = 0, '', None
                 # custom은 실행 중 토큰, updates는 완료한 노드의 상태다. 미완료 응답은 저장하지 않는다.
-                async for mode,payload in app.state.graph.astream(
-                        _conversation_state(message,thread_id,prepared),stream_mode=['updates','custom']):
-                    if mode == 'custom':
-                        yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
-                        continue
-                    for node_name,delta in payload.items():
-                        for ev in (delta.get('events') or [])[seen:]:
-                            yield f"data: {json.dumps({**ev,'node':node_name}, ensure_ascii=False)}\n\n"
-                        if delta.get('events'):
-                            seen = len(delta['events'])
-                        if delta.get('final'):
-                            final = delta['final']
-                        if delta.get('last_prompt'):
-                            last_prompt = delta['last_prompt']
+                # 외부 SSE가 닫힐 때 내부 그래프의 대기 작업도 정리한다.
+                async with aclosing(app.state.graph.astream(
+                        _conversation_state(message,thread_id,prepared),stream_mode=['updates','custom'])) as stream:
+                    async for mode,payload in stream:
+                        if mode == 'custom':
+                            yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                            continue
+                        for node_name,delta in payload.items():
+                            for ev in (delta.get('events') or [])[seen:]:
+                                yield f"data: {json.dumps({**ev,'node':node_name}, ensure_ascii=False)}\n\n"
+                            if delta.get('events'):
+                                seen = len(delta['events'])
+                            if delta.get('final'):
+                                final = delta['final']
+                            if delta.get('last_prompt'):
+                                last_prompt = delta['last_prompt']
                 if not final:
                     raise RuntimeError('Graph completed without a final answer')
                 _save_conversation(deps,thread_id,message,final,prepared)
@@ -261,7 +263,7 @@ async def chat_stream(message: str, thread_id: str = "default"):
                 yield f"data: {json.dumps({'type':'FinalAnswer','reply':final,'prompt':last_prompt}, ensure_ascii=False)}\n\n"
             yield "data: [DONE]\n\n"
 
-    return StreamingResponse(gen(), media_type="text/event-stream")
+    return DisconnectAwareStreamingResponse(gen(), media_type="text/event-stream")
 
 
 if __name__ == "__main__":

@@ -54,3 +54,6 @@ requirements-dev.txt
 
 # Offline report evaluation tooling, datasets and judge experiments
 /eval/
+
+# Service unit test: SSE disconnect propagation (API and proxy)
+!/tests/test_stream_disconnect.py
