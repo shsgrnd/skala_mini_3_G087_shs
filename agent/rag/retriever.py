@@ -13,6 +13,7 @@ from .indexer import (RUNBOOKS, QUERY_PREFIX, REBUILD, chroma_client, index_iden
 
 
 def monitoring_query(collected: list[dict]) -> str:
+    # 사용자 지시나 과거 대화가 검색 유형을 바꾸지 않도록 이번에 수집한 지표의 상태·알림만 쿼리로 쓴다.
     return ' '.join(' '.join([str(c['data'].get('status', '')),
                              *c['data'].get('alerts', [])]).strip()
                     for c in collected if c.get('source') == 'monitoring').strip()
@@ -36,6 +37,7 @@ class IncidentRetriever:
             self.collection = self.client.get_collection(self.identity['collection'], embedding_function=None)
             if self.collection.count() != len(self.identity['documents']):
                 raise ValueError('incomplete index')
+            # 서버 기동 중 모델을 내려받지 않는다. 최초 다운로드·인덱스 구축은 indexer CLI에서 수행한다.
             self.encoder = encoder if encoder is not None else load_encoder(settings, local_only=True)
         except Exception as exc:
             raise ValueError(f'Runbook index missing, stale or unavailable. {REBUILD}') from exc
@@ -55,6 +57,7 @@ class IncidentRetriever:
                                            include=['metadatas', 'documents', 'distances'])
             sources = {d['incident_type']: d for d in docs}
             for meta, body, distance in zip(result['metadatas'][0], result['documents'][0], result['distances'][0]):
+                # manifest 일치만으로 본문을 신뢰하지 않고 검색 결과도 현재 원문·출처·해시와 대조한다.
                 expected = sources.get(meta['incident_type'])
                 if (expected is None or body != expected['body']
                         or any(meta.get(k) != expected[k] for k in ('source', 'sha256'))):

@@ -12,6 +12,7 @@ def resolve_targets(query: str) -> dict:
     known = load_known_systems()
     incident_labels = {path.stem for path in (ROOT / "data/runbooks").glob("*.md")}
     targets, unknown = [], []
+    # 영문 식별자 전체를 비교해 접두사만 같은 별도 시스템을 승인하지 않는다. 한글 조사는 경계로 허용한다.
     for match in re.finditer(r'(?<![A-Za-z0-9_.-])[A-Za-z][A-Za-z0-9_.-]*', query):
         token = match.group().rstrip('.')
         if token in known:
@@ -19,6 +20,7 @@ def resolve_targets(query: str) -> dict:
                 targets.append(token)
         elif any(mark in token for mark in ('-', '_', '.')) and token not in incident_labels and token not in unknown:
             unknown.append(token)
+    # 알려진 이름과 미등록 이름이 섞여도 전체 요청을 보류한다. 알려진 대상만 몰래 조회하지 않는다.
     return {'status': 'unknown' if unknown else ('resolved' if targets else 'missing'),
             'targets': targets, 'unknown': unknown}
 
@@ -41,7 +43,8 @@ def guess_targets(query: str, config=None) -> list[str]:
 
 
 def guard_monitoring_tasks(tasks: list[dict], targets: list[str]) -> list[dict]:
-    # Only the user's resolved systems may reach the monitoring Tool.
+    # 모델이 제시한 monitoring 목록을 필터링하는 대신 사용자 승인 대상 전체로 재생성해 누락도 복구한다.
+    # analysis 등 다른 종류의 작업은 유지하며, monitoring/logs 실행 직전 검증은 graph.py가 담당한다.
     monitoring = [{'id': f'task-target-{i}', 'agent': 'research', 'kind': 'monitoring',
                    'target': target, 'status': 'pending'} for i, target in enumerate(targets)]
     other = [dict(t) for t in tasks if not (t.get('agent') == 'research' and t.get('kind') == 'monitoring')]

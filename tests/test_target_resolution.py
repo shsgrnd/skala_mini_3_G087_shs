@@ -1,5 +1,6 @@
 """서비스 단위 테스트: 외부 계정·실모델·ignored scripts 없이 실행되어야 한다.
 """
+# 유지보수: 실모델의 계획만 대체하고 공통 대상 정책은 실행한다. 세 백엔드를 바꾸면 같은 케이스를 모두 유지한다.
 import importlib.util
 import pytest
 

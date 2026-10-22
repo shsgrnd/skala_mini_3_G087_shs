@@ -31,6 +31,7 @@ def build_metric_graph(deps):
             return {'result': result('metric', target, io)}
         try:
             data = io['payload']
+            # Tool이 성공했어도 내용은 불신한다. 대상·수치·시각 검증을 모두 통과한 값만 evidence가 된다.
             if data['system_name'] != target or data['status'] not in ('healthy','degraded','down'):
                 raise ValueError('Unexpected metric target/status')
             for field in ('cpu_percent','memory_percent'):

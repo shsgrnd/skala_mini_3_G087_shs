@@ -64,6 +64,7 @@ def get_monitoring_status(system_name: str) -> SystemStatus:
 @mcp.tool()
 def get_recent_logs(system_name: str, limit: int = 20) -> dict:
     """Read synthetic log examples for a registered system; never reads arbitrary paths."""
+    # 파일·레코드 검증은 log_source 한 곳에서 수행한다. Tool별 별도 읽기 구현을 두면 정책이 달라진다.
     return read_recent_logs(system_name, limit)
 
 
@@ -71,6 +72,7 @@ def get_recent_logs(system_name: str, limit: int = 20) -> dict:
 def get_incident_runbook(incident_type: str) -> str:
     """특정 incident 유형의 runbook(정적 문서)을 반환합니다."""
     runbook_path = DATA_DIR / "runbooks" / f"{incident_type}.md"
+    # URI 인자도 외부 입력이다. 경로 이동 및 심볼릭 링크로 런북 디렉터리 밖을 읽지 못하게 한다.
     if runbook_path.resolve().parent != (DATA_DIR / "runbooks").resolve():
         raise ValueError("Invalid runbook path")
     if not runbook_path.exists():

@@ -54,6 +54,7 @@ class OpenAILLM:
         self.usd_per_1k = usd_per_1k_tokens
         self.api_key = os.environ.get("OPENAI_API_KEY", "")
 
+    # route/plan/analyze에 남아 있는 동기 경로다. 답변용 _achat의 취소 가능 범위와 구분해야 한다.
     def _chat(self, system: str, user: str, json_mode: bool = False) -> tuple[str, dict]:
         if not self.api_key:
             raise RuntimeError(
@@ -86,6 +87,7 @@ class OpenAILLM:
         payload = {'model': self.model, 'messages': [
             {'role': 'system', 'content': system}, {'role': 'user', 'content': user}],
             'temperature': 0}
+        # HTTP 연결 정리는 원격 추론 중단이나 과금 취소를 보장하지 않는다.
         # 스레드에서 동기 요청을 계속 실행하지 않도록 실제 전송 자체를 await한다.
         async with httpx.AsyncClient(timeout=120.0) as client:
             response = await client.post(OPENAI_URL, json=payload,
@@ -189,6 +191,7 @@ class OpenAIFastLLM(OpenAILLM):
             response.raise_for_status()
             data = response.json()
         tokens = data.get('usage',{}).get('total_tokens',0)
+        # JSON 모드는 문법만 보장한다. 필드·빈 요약·근거 ID의 최종 검사는 memory.prepare가 담당한다.
         return json.loads(data['choices'][0]['message']['content']), {"model":self.name,"tokens":tokens,
                 "usd":round(tokens/1000*self.usd_per_1k,6)}
 

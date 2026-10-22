@@ -30,6 +30,7 @@ from langsmith import traceable
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+# collect()가 요청별 리스트를 바인딩한다. gather 하위 작업에도 문맥이 전달돼 다른 요청의 계측과 섞이지 않는다.
 MCP_TIMINGS = ContextVar('mcp_timings', default=None)
 
 SERVER_DIR = Path(__file__).parent.parent
@@ -100,6 +101,7 @@ class MCPClient:
             raise asyncio.TimeoutError("simulated transient timeout (Wave 9 demo)")
         async with self._timed_lock():
             result = await self.sessions[server].call_tool(name, arguments)
+        # 정상 JSON 모양의 오류 본문도 관측 근거로 쓰면 안 된다. SDK 버전별 오류 플래그를 먼저 검사한다.
         if getattr(result, 'isError', getattr(result, 'is_error', False)):
             raise RuntimeError(f'MCP tool failed: {name}')
         return json.loads(result.content[0].text)

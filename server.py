@@ -139,6 +139,7 @@ async def version():
     return {"supervisor_version": app.state.deps.version}
 
 
+# HTTP 응답의 진단 계약이다. 새 상태를 공개할 때는 SSE 이벤트에도 필요한 정보가 있는지 함께 확인한다.
 def _metadata(result: dict, run_id: str | None) -> dict:
     return {
         "route": result.get("route"),
@@ -172,6 +173,7 @@ async def _conversation(deps, thread_id: str, message: str):
     if deps.memory is None:
         yield PreparedMemory(deps.session_store.load(thread_id),info={'mode':'recent'})
         return
+    # 잠금은 요약 준비부터 생성·저장까지 유지한다. 준비만 잠그면 두 요청이 같은 이전 상태로 답할 수 있다.
     async with deps.memory.turn(thread_id):
         # 현재 운영 질문의 대상 가드 전에 요약 LLM을 호출하거나 과거 대상을 추론하지 않는다.
         if re.search(deps.config.target_required_pattern,message,re.IGNORECASE):
@@ -235,6 +237,7 @@ async def chat_stream(message: str, thread_id: str = "default"):
                     yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
                 yield f"data: {json.dumps({'type':'FinalAnswer','reply':result['final']}, ensure_ascii=False)}\n\n"
             else:
+                # events는 노드마다 누적 목록으로 반환된다. seen 이후만 전송해 진행 이벤트 중복을 막는다.
                 seen, final, last_prompt = 0, '', None
                 # custom은 실행 중 토큰, updates는 완료한 노드의 상태다. 미완료 응답은 저장하지 않는다.
                 # 외부 SSE가 닫힐 때 내부 그래프의 대기 작업도 정리한다.
@@ -258,6 +261,7 @@ async def chat_stream(message: str, thread_id: str = "default"):
                 _save_conversation(deps,thread_id,message,final,prepared)
                 if deps.memory is not None:
                     yield f"data: {json.dumps({'type':'ConversationMemory',**prepared.info}, ensure_ascii=False)}\n\n"
+                # strict SSE에서는 모델 입력 원문을 최종 프레임에 싣지 않는다. reply와 진행 이벤트는 유지한다.
                 if deps.config.target_resolution_mode == 'strict':
                     last_prompt = None
                 yield f"data: {json.dumps({'type':'FinalAnswer','reply':final,'prompt':last_prompt}, ensure_ascii=False)}\n\n"

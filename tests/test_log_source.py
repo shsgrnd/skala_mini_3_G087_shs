@@ -1,5 +1,6 @@
 """서비스 단위 테스트: 외부 계정·실모델·ignored scripts 없이 실행되어야 한다.
 """
+# 유지보수: 합성 fixture와 tmp_path만 읽는다. 잘못된 대상·범위·출처는 빈 정상 응답이 아니라 예외여야 한다.
 import json
 from pathlib import Path
 

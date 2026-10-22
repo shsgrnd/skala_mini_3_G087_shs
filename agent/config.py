@@ -82,6 +82,7 @@ def load_config() -> AgentConfig:
     classifier = os.environ.get('INCIDENT_CLASSIFIER', 'keyword')
     if classifier not in ('keyword', 'rag'):
         raise ValueError('INCIDENT_CLASSIFIER must be keyword or rag')
+    # 모델·문서의 동일성은 인덱스 fingerprint로, 검색 채택 정책은 threshold/margin으로 관리한다.
     raw = data.get('rag', {})
     if not isinstance(raw, dict):
         raise ValueError('rag must be a JSON object')
@@ -89,6 +90,7 @@ def load_config() -> AgentConfig:
         rag = RAGConfig(**raw)
     except TypeError as exc:
         raise ValueError('Invalid rag settings') from exc
+    # bool은 int의 하위 타입이므로 type을 직접 비교해 true가 차원·개수로 통과하지 않게 한다.
     if (not isinstance(rag.model, str) or not rag.model.strip()
             or not isinstance(rag.revision, str) or not re.fullmatch(r'[0-9a-f]{40}', rag.revision)
             or not isinstance(rag.index_path, (str, Path)) or not str(rag.index_path).strip()
@@ -113,6 +115,7 @@ def load_config() -> AgentConfig:
         memory = MemoryConfig(**data.get('memory', {}))
     except TypeError as exc:
         raise ValueError('Invalid memory settings') from exc
+    # recent_messages는 user/assistant 쌍을 유지하고, 요약을 시작할 전체 메시지 수보다 작아야 한다.
     if (type(memory.trigger_turns) is not int or not 2 <= memory.trigger_turns <= 100
             or type(memory.recent_messages) is not int or not 2 <= memory.recent_messages < memory.trigger_turns * 2
             or memory.recent_messages % 2

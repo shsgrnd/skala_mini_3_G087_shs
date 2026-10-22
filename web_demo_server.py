@@ -49,6 +49,8 @@ async def proxy_chat(req: Request):
 
 @app.get("/chat/stream")
 async def proxy_stream(message: str, thread_id: str = "web-demo"):
+    # 외부 disconnect → relay 취소 → upstream context 종료 순서로 API 연결까지 닫는다.
+    # 프레임을 재파싱하지 않고 바이트를 중계해 SSE 경계와 [DONE]을 그대로 보존한다.
     async def relay():
         async with httpx.AsyncClient(timeout=None) as client:
             async with client.stream(

@@ -75,6 +75,7 @@ class OllamaLLM:
         self.config = load_config()
         self.usd_per_1k = usd_per_1k_tokens
 
+    # route/plan/analyze는 아직 동기 전송이다. chat/write의 비동기 취소 보장을 이 경로에 확대 해석하지 않는다.
     def _chat(self, system: str, user: str, schema: dict | None = None) -> tuple[str, dict]:
         payload = {
             "model": self.model,
@@ -122,6 +123,7 @@ class OllamaLLM:
                         chunks.append(piece)
                         if on_token is not None:
                             on_token(piece)
+                    # 토큰 사용량은 마지막 done 프레임에서 확정한다. 중도 취소 시 0은 실제 무사용을 뜻하지 않는다.
                     if data.get("done"):
                         tokens = ((data.get("prompt_eval_count") or 0)
                                   + (data.get("eval_count") or 0))
@@ -213,6 +215,7 @@ class OllamaFastLLM(OllamaLLM):
         payload = {"model":self.model,"messages":[{"role":"system","content":self.config.prompts['summarize_history']},
                    {"role":"user","content":summary_input(previous,messages)}],
                    "think":False,"stream":False,"format":SUMMARY_SCHEMA,"options":{"temperature":0.0}}
+        # JSON Schema 출력이어도 필드·빈 요약·근거 ID는 memory.prepare에서 다시 검증한다.
         # async 요청이어야 상위 요약 timeout/연결 취소가 실제 전송에도 전달된다.
         async with httpx.AsyncClient(timeout=120.0) as client:
             response = await client.post(OLLAMA_URL,json=payload)

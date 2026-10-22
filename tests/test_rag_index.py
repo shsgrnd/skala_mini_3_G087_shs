@@ -1,5 +1,6 @@
 """서비스 단위 테스트: 외부 계정·실모델·ignored scripts 없이 실행되어야 한다.
 """
+# 유지보수: TinyEncoder는 두 축의 결정적 벡터다. Chroma 적재·원문 무결성은 검증하지만 E5 의미 정확도는 측정하지 않는다.
 import json
 from dataclasses import replace
 

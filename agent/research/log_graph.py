@@ -42,6 +42,7 @@ def build_log_graph(deps):
                 evs.append(evidence('synthetic_log', target, line['timestamp'], line, synthetic=True,
                                     identifier=f"log:{target}:{line['evidence_id']}", uri='tool://ops/get_recent_logs',
                                     location=f"data/logs/{target}.jsonl#{line['evidence_id']}"))
+            # 같은 ID의 여러 줄을 서로 독립된 근거로 집계하지 않는다. 빈 결과도 실제 운영 로그 정상의 증거는 아니다.
             if len({e['id'] for e in evs}) != len(evs):
                 raise ValueError('Duplicate log IDs')
             findings = [f"합성 로그 {len(evs)}개, 오류/경고 {sum(e['payload']['level'] in ('ERROR','WARN') for e in evs)}개; 실제 운영 원인 증거가 아님"]

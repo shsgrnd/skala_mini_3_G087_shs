@@ -1,6 +1,7 @@
 """서비스 단위 테스트: 외부 계정·실모델·ignored scripts 없이 실행되어야 한다.
 원본의 알려진 실패는 XFAIL로 보존하며 새 모드의 개선 결과와 혼합하지 않는다.
 """
+# 유지보수: strict XFAIL은 원본 한계를 기록한다. 새 검색 모드의 성공을 만들려고 baseline 기대값을 바꾸지 않는다.
 import json
 from pathlib import Path
 import pytest

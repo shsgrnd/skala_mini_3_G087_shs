@@ -1,4 +1,5 @@
 """서비스 단위 테스트: OpenAI 응답 대기 취소가 HTTP 요청과 callback 경계까지 전달된다."""
+# 유지보수: 대기·취소·close 신호를 분리해 실제 async 경로와 자원 정리를 확인한다. 원격 OpenAI나 과금은 발생하지 않는다.
 import asyncio
 import json
 

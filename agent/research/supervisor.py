@@ -48,6 +48,7 @@ async def research_multi(state, deps):
         result['latency_ms'] = round((time.perf_counter()-wall)*1000,3)
         return result
 
+    # 그래프 실행은 겹치지만 MCPClient의 공유 잠금 때문에 stdio I/O는 직렬이다. 병렬 속도 향상을 보장하지 않는다.
     results = await asyncio.gather(*(run(key) for key in jobs))
     events = list(state.get('events', []))
     for result in results:
@@ -62,6 +63,7 @@ async def research_multi(state, deps):
                        'id':task['id'], 'source':{'monitoring':'monitoring','logs':'logs','runbook':'runbook'}.get(task.get('kind')),
                        'target':task.get('target'), 'retries':result['retries'] if result else 0})
 
+    # replan은 이전 수집 결과까지 다시 집계한다. 기존 collected에 append하면 같은 관측이 중복된다.
     evidence, seen, collected, warnings = [], set(), [], []
     for result in previous.values():
         if result['status']!='ok':

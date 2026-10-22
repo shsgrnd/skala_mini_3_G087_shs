@@ -62,6 +62,7 @@ class SqliteSessionStore:
     def save_turn(self, thread_id: str, query: str, reply: str, *, summary: dict | None = None,
                   through_rowid: int = 0, expected_version: int = 0) -> bool:
         """대화 쌍과 요약을 원자적으로 저장한다. 오래된 요약 후보는 CAS로 거부한다."""
+        # 반환값은 요약 갱신 여부다. False여도 완료한 대화 쌍은 저장되므로 재호출하면 원문이 중복된다.
         now = datetime.now().isoformat()
         with self._lock, self.conn:
             self.conn.executemany('INSERT INTO messages VALUES (?,?,?,?)',
@@ -71,6 +72,8 @@ class SqliteSessionStore:
             if not self.conn.execute('SELECT 1 FROM messages WHERE thread_id=? AND rowid=?',
                                      (thread_id,through_rowid)).fetchone():
                 raise ValueError('Summary checkpoint does not belong to this thread')
+            # 다른 프로세스가 요약을 먼저 갱신하면 version/checkpoint 조건으로 덮어쓰기를 막는다.
+            # 이 CAS는 요약 충돌 방지이며 프로세스 간 전체 턴 실행 순서를 보장하는 잠금은 아니다.
             cursor = self.conn.execute(
                 'INSERT INTO thread_summaries VALUES (?,?,?,?,1) '
                 'ON CONFLICT(thread_id) DO UPDATE SET summary=excluded.summary, '

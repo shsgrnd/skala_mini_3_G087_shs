@@ -1,5 +1,6 @@
 """서비스 단위 테스트: 외부 계정·실모델·ignored scripts 없이 실행되어야 한다.
 """
+# 유지보수: HTTP 전송만 MockTransport로 대체한다. sync/stream 두 payload의 thinking 설정과 마지막 사용량을 함께 지킨다.
 import asyncio
 import json
 

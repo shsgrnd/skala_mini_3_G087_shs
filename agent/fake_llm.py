@@ -57,6 +57,7 @@ class FastLLM(FakeLLM):
         ]
         tasks.append({"id": "task-analysis", "agent": "analysis",
                       "kind": "pattern-analysis", "status": "pending"})   # 자기모순 task
+        # legacy 시연용 web-01 자동 추가도 strict에서는 제거해 실모델과 같은 대상 정책을 적용한다.
         if self.config.target_resolution_mode == 'strict':
             tasks = guard_monitoring_tasks(tasks, resolve_targets(query)['targets'])
         result = {"needs_analysis": False, "tasks": tasks}
@@ -93,6 +94,7 @@ class FastLLM(FakeLLM):
 
         fake 백엔드는 실제 네트워크 호출이 없어 토큰 단위로 쪼갤 대상이 없다 —
         ollama_llm.py와 인터페이스(on_token 콜백)만 맞추고 결과를 한 번에 반환한다."""
+        # 요약을 앞에 두고 역순 탐색해 최근 원문의 이름 정정이 과거 요약보다 우선하게 한다.
         if history_context is not None:
             from .memory import render_history
             history = [{"role":"user","content":render_history([],history_context)}, *history]

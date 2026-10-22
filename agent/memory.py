@@ -52,6 +52,7 @@ def render_history(history: list[dict], context: dict | None = None) -> str:
 class PreparedMemory:
     history: list[dict]
     summary: dict | None = None
+    # summary는 이번 답변의 입력, candidate는 성공 시 DB에 저장할 새 요약이다. 재사용 시 candidate는 없다.
     candidate: dict | None = None
     through_rowid: int = 0
     expected_version: int = 0
@@ -87,6 +88,7 @@ class ConversationMemory:
             full = [{'role':r['role'],'content':r['content']} for r in rows]
             point = saved['last_compacted_rowid'] if saved else 0
             previous = validate_summary(saved['summary']) if saved else None
+            # checkpoint는 배열 위치가 아닌 SQLite rowid다. 최근 원문과 요약 구간이 겹치지 않게 나눈다.
             pending = [row for row in rows if row['rowid']>point]
             result.summary = previous
             result.expected_version = saved['version'] if saved else 0
@@ -125,6 +127,8 @@ class ConversationMemory:
                 result.history = full[-self.config.recent_messages:]
                 # 활성 모드의 recent N을 renderer의 legacy 10개 제한과 구별한다.
                 result.summary = empty_summary()
+        # 형식 검증은 사실의 의미 보존까지 보장하지 않는다. 실패 시 최근 10개만 쓰고 checkpoint는 유지한다.
+        # CancelledError는 이 Exception 처리에 포함되지 않아 상위 응답 취소가 그대로 전파된다.
         except Exception as exc:
             logging.getLogger(__name__).warning('Conversation summary fallback: %s',type(exc).__name__)
             result.history, result.summary, result.candidate = full[-10:], None, None
@@ -133,6 +137,7 @@ class ConversationMemory:
         return result
 
     def commit(self, thread_id: str, query: str, reply: str, prepared: PreparedMemory) -> None:
+        # 호출자는 답변 완성 후 한 번만 실행한다. 원문 대화 쌍과 요약 후보를 같은 트랜잭션에 저장한다.
         prepared.info['summary_saved'] = self.store.save_turn(
             thread_id,query,reply,summary=prepared.candidate,through_rowid=prepared.through_rowid,
             expected_version=prepared.expected_version)

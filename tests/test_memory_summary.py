@@ -1,4 +1,5 @@
 """S4 서비스 단위: 원문 보존·증분 범위·실패 복구를 외부 모델 없이 검증한다."""
+# 유지보수: 임시 SQLite와 fake 요약으로 원자성·증분 범위·취소를 확인한다. 자연어 의미 보존까지 검증하는 테스트는 아니다.
 import asyncio
 import json
 import sqlite3

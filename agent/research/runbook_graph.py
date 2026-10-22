@@ -35,6 +35,7 @@ def build_runbook_graph(deps):
         if io['error']:
             return {'result': result('runbook',target,io)}
         body, uri = io['payload']['body'], io['payload']['uri']
+        # 런북은 관측 시각/시스템이 없는 권고 문서다. 본문 해시와 줄 위치로 출처를 추적한다.
         ev = evidence('runbook', None, None, body, uri=uri,
                       location={'start_line':1,'end_line':len(body.splitlines())}, incident_type=target)
         findings = [line.strip() for line in body.splitlines() if re.match(r'^\d+\.',line)][:3]

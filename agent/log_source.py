@@ -18,6 +18,7 @@ def read_recent_logs(system_name: str, limit: int = 20) -> dict:
         raise ValueError('Unknown log system')
     if type(limit) is not int or not 1 <= limit <= 100:
         raise ValueError('limit must be an integer between 1 and 100')
+    # 등록된 이름도 심볼릭 링크를 통해 외부 파일을 가리킬 수 있으므로 실제 경로까지 확인한다.
     path = LOG_DIR / f'{system_name}.jsonl'
     if path.resolve().parent != LOG_DIR.resolve():
         raise ValueError('Log path outside data/logs')
@@ -35,5 +36,6 @@ def read_recent_logs(system_name: str, limit: int = 20) -> dict:
         datetime.fromisoformat(item['timestamp'])
         seen.add(item['evidence_id'])
         entries.append(item)
+    # 파일 기록 순서를 최신 순서로 가정하지 않는다. 전체 검증 후 시각으로 정렬해 마지막 N개를 반환한다.
     entries.sort(key=lambda item: datetime.fromisoformat(item['timestamp']))
     return {'system_name': system_name, 'synthetic': True, 'entries': entries[-limit:]}

@@ -1,5 +1,6 @@
 """서비스 단위 테스트: 외부 계정·실모델·ignored scripts 없이 실행되어야 한다.
 """
+# 유지보수: 임베딩 모델 대신 후보를 주입해 채택/보류와 그래프 분기 계약을 검증한다. 의미 검색 품질 평가는 별도다.
 import asyncio
 from dataclasses import replace
 from unittest.mock import Mock

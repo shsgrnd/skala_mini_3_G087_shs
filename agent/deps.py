@@ -24,6 +24,7 @@ class SupervisorDeps:
 
     config: AgentConfig = field(default_factory=load_config)
 
+    # 선택 기능은 비활성일 때 None이다. 새 요청의 결과를 이 공유 객체에 누적하면 대화 간 정보가 섞인다.
     incident_retriever: Any = None
 
     memory: Any = None

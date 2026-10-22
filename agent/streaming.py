@@ -14,6 +14,7 @@ class DisconnectAwareStreamingResponse(StreamingResponse):
                 # 소켓 전송 실패만 종료로 분류하고 생성기·상류 I/O 오류는 전파한다.
                 raise ClientDisconnect() from exc
 
+        # 전송과 disconnect 수신을 동시에 기다린다. 한쪽이 끝나면 다른 쪽을 취소·회수해야 작업이 남지 않는다.
         tasks = [asyncio.create_task(self.stream_response(send_or_disconnect)),
                  asyncio.create_task(self.listen_for_disconnect(receive))]
         try:
@@ -29,6 +30,7 @@ class DisconnectAwareStreamingResponse(StreamingResponse):
                 if not task.done():
                     task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
+            # send에서 멈춘 생성기는 yield 직후 정지해 있을 수 있어 task 취소 외에 aclose도 필요하다.
             close = getattr(self.body_iterator, 'aclose', None)
             if close is not None:
                 await close()

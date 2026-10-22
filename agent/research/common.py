@@ -21,6 +21,7 @@ class ResearchState(TypedDict, total=False):
 
 async def collect(operation, timeout: float) -> dict:
     started, attempts, timings = time.perf_counter(), 0, []
+    # timeout은 잠금 대기까지 포함한 시도별 제한이다. 일시적 TimeoutError만 공통 retry 정책으로 재시도한다.
     token = MCP_TIMINGS.set(timings)
 
     async def timed():
@@ -31,6 +32,7 @@ async def collect(operation, timeout: float) -> dict:
     try:
         payload, retries = await with_retry(timed)
         error = None
+    # 수집 실패는 결과 계약으로 바꿔 다른 출처를 살린다. 요청 취소(CancelledError)는 삼키지 않는다.
     except Exception as exc:
         payload, retries, error = None, max(0, attempts - 1), type(exc).__name__
     finally:
@@ -50,6 +52,7 @@ def result(agent, target, io=None, *, evidence=None, findings=None, error=None, 
 
 
 def evidence(source, system, timestamp, payload, *, synthetic=False, identifier=None, **metadata):
+    # 출처·대상·시각·본문이 같은 관측만 같은 ID를 갖는다. 문서 권고와 관측값은 source로 구분한다.
     digest = hashlib.sha256(json.dumps([source,system,timestamp,payload], sort_keys=True).encode()).hexdigest()
     return {'source': source, 'id': identifier or f'{source}:{digest[:24]}', 'system': system,
             'timestamp': timestamp, 'payload': payload, 'synthetic': synthetic, **metadata}

@@ -38,6 +38,7 @@ def read_runbooks(path: Path = RUNBOOKS) -> list[dict]:
 
 
 def index_identity(settings, docs: list[dict]) -> dict:
+    # threshold/top_k는 검색 정책이라 제외한다. 문서·모델·prefix·거리 규칙을 바꿀 때만 새 인덱스가 필요하다.
     identity = {'schema': 1, 'model': settings.model, 'revision': settings.revision,
                 'dimension': settings.dimension, 'query_prefix': QUERY_PREFIX,
                 'passage_prefix': PASSAGE_PREFIX, 'max_seq_length': 512,
@@ -70,7 +71,7 @@ def build_index(settings, path: Path = RUNBOOKS, *, encoder=None) -> dict:
     encoder = encoder if encoder is not None else load_encoder(settings, local_only=False)
     vectors = encoder.encode([PASSAGE_PREFIX + d['body'] for d in docs], normalize_embeddings=True)
     client = chroma_client(settings.index_path)
-    # A new corpus gets a separate collection so a failed rebuild leaves the active index intact.
+    # 다른 fingerprint는 별도 collection에 적재한다. 같은 fingerprint 재실행은 기존 collection을 갱신한다.
     collection = client.get_or_create_collection(manifest['collection'], embedding_function=None,
                                                 configuration={'hnsw': {'space': 'cosine'}})
     collection.upsert(ids=[d['incident_type'] for d in docs], embeddings=vectors,
@@ -81,6 +82,7 @@ def build_index(settings, path: Path = RUNBOOKS, *, encoder=None) -> dict:
     target = settings.index_path / 'manifest.json'
     temp = target.with_name(f'manifest.{os.getpid()}.tmp')
     temp.write_text(json.dumps(manifest, ensure_ascii=False, indent=2))
+    # 완성된 세대만 manifest로 공개한다. 실패 전까지 이전 manifest가 유지되며 이전 collection은 삭제하지 않는다.
     temp.replace(target)
     return manifest
 

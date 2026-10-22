@@ -1,4 +1,5 @@
 """모델 응답 대기 중 연결 종료도 취소하고 정상 SSE 프레임은 보존한다."""
+# 유지보수: ASGI receive/send를 직접 구동한다. 단순 생성기 종료와 LangGraph 하위 작업 종료를 따로 검증한다.
 import asyncio
 from types import SimpleNamespace
 

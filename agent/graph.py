@@ -5,7 +5,8 @@ incident: plan(MCP Prompt 절차 반영) → gate(권위 게이트) → research
           → replan_check(부족 시 gap task 후 재조사) → analysis(needs_analysis=True일 때만
           실제 실행) → write → validate(반려 시 재작성) → finalize
 
-모든 노드는 SupervisorDeps를 functools.partial로 주입받는 순수 함수다(Wave 13).
+노드는 SupervisorDeps를 functools.partial로 주입받고 상태 변경분을 반환한다(Wave 13).
+LLM·MCP 호출 같은 외부 I/O도 수행하므로 부수 효과가 없는 순수 함수는 아니다.
 각 노드는 @traceable로 LangSmith에 계층 트리로 기록된다.
 
 
@@ -39,9 +40,11 @@ def _extract_system_name(query: str) -> str | None:
 
 
 class AgentState(TypedDict, total=False):
+    # 한 요청의 상태다. reducer가 없으므로 목록을 반환할 때 이전 events/tasks를 보존할 책임은 각 노드에 있다.
     query: str
     thread_id: str
     history: list[dict]
+    # 과거 요약은 chat 입력 전용이다. 현재 Tool 조회 대상은 query에서 별도로 해석한다.
     history_context: dict
     route: str
     target_resolution: dict
@@ -77,6 +80,7 @@ async def route_node(state: AgentState, deps: SupervisorDeps) -> dict:
     resolution = resolve_targets(state['query']) if strict else None
     target_issue = bool(strict and resolution['status'] != 'resolved'
                         and re.search(deps.config.target_required_pattern, state['query'], re.IGNORECASE))
+    # 운영 조회임이 명확하면 모델 호출 전에 대상 확인으로 보낸다. 기술 개념 질문은 chat 분류를 허용한다.
     if target_issue:
         result, usage = {'route': 'incident', 'needs_analysis': False}, {'usd': 0.0}
     else:
@@ -134,6 +138,7 @@ async def plan_node(state: AgentState, deps: SupervisorDeps) -> dict:
     result, usage = deps.fast_llm.plan(state["query"], procedure)
     if deps.config.target_resolution_mode == 'strict':
         result['tasks'] = guard_monitoring_tasks(result['tasks'], state['target_resolution']['targets'])
+    # 지표와 로그는 시스템별 수집이고 런북은 장애 유형별 수집이다. 유형은 첫 조사 뒤 replan에서 고른다.
     if deps.config.research_strategy == 'multi':
         systems = list(dict.fromkeys(t['target'] for t in result['tasks'] if t.get('kind')=='monitoring'))
         result['tasks'] += [{'id':f'task-log-{system}', 'agent':'research', 'kind':'logs',
@@ -167,6 +172,7 @@ async def research_node(state: AgentState, deps: SupervisorDeps) -> dict:
     """Wave 15 가드 + Wave 10b 병렬 + Wave 9 재시도 + Wave 2 Tool/Resource 실호출."""
     tasks = state["tasks"]
     if deps.config.target_resolution_mode == 'strict':
+        # planner 보정과 별개의 실행 경계다. 외부에서 만든 task도 실제 MCP 호출 전에 다시 검증한다.
         approved = state.get('target_resolution', {}).get('targets', [])
         if any(t.get('kind') in ('monitoring','logs') and t.get('status') == 'pending'
                and t.get('target') not in approved for t in tasks):
@@ -261,8 +267,10 @@ async def replan_check_node(state: AgentState, deps: SupervisorDeps) -> dict:
         return {'events':state['events'] + [{'type':'ReplanCheck','round':rounds,'is_sufficient':True,
                                            'reason':'no_monitoring_evidence'}]}
     retrieval = None
+    # RAG 오류·낮은 신뢰도는 별도 보류 응답으로 끝낸다. keyword로 바꾸면 검색 실패가 성공처럼 보인다.
     if deps.config.incident_classifier == 'rag':
         try:
+            # 로컬 임베딩 계산이 이벤트 루프를 막지 않게 한다. await 취소가 계산 스레드 자체를 중단하지는 않는다.
             retrieval = await asyncio.to_thread(deps.incident_retriever.retrieve, state.get('collected', []))
         except Exception:
             logging.getLogger(__name__).exception('Runbook retrieval failed')
@@ -324,13 +332,14 @@ async def analysis_node(state: AgentState, deps: SupervisorDeps) -> dict:
 
 @traceable(name="write_node")
 async def write_node(state: AgentState, deps: SupervisorDeps) -> dict:
-    """Wave 8/10a — 고품질 모델로 초안 작성 (1차는 의도적 저품질).
+    """Wave 8/10a — 고품질 모델로 초안을 작성한다. legacy fake만 첫 초안을 의도적으로 짧게 만든다.
 
     토큰마다 attempt 번호를 같이 실어 보낸다 — validate가 반려해 재작성(attempt 증가)
     될 때 프론트가 새 말풍선으로 끊어서 보여줄 수 있게 하기 위함(Wave 8 재작성 루프를
     그대로 노출)."""
     attempt = state.get("validation_attempts", 0) + 1
     writer = get_stream_writer()
+    # 근거가 일부 실패한 경우 모델로 빈칸을 채우지 않고 검증된 자료만 결정적으로 보고한다.
     if deps.config.research_strategy == 'multi' and state.get('research_status') != 'ok':
         from .research.common import evidence_report
         draft = evidence_report(state.get('collected',[]))
@@ -359,6 +368,7 @@ async def validate_node(state: AgentState, deps: SupervisorDeps) -> dict:
     """Wave 8 — 코드 기준 검증: 30자 이상 + 절차 번호 포함이어야 합격."""
     draft = state["draft"]
     attempts = state.get("validation_attempts", 0) + 1
+    # 이 검사는 형식만 확인한다. 근거 일치·수치 정확도 평가를 하는 오프라인 Judge와는 별개다.
     ok = len(draft) >= 30 and "1)" in draft
     verdict = "합격" if ok else "불합격"
     if not ok and attempts >= 3:   # 실모델 무한 재작성 방지 — 최대 3회 후 통과 처리
@@ -398,6 +408,7 @@ def build_graph(deps: SupervisorDeps):
     if deps.config.research_strategy == 'multi':
         from .research.supervisor import build_research_graphs
         deps.research_graphs = build_research_graphs(deps)
+    # 새 단계는 노드 등록과 아래 조건부 edge를 함께 수정한다. 대상/검색 보류는 write를 거치지 않고 종료한다.
     g = StateGraph(AgentState)
     node = lambda fn: partial(fn, deps=deps)   # Wave 13 — 명시적 의존성 주입
     g.add_node("route", node(route_node))

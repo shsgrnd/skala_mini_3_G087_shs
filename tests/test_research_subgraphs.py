@@ -1,6 +1,7 @@
 """서비스 단위 테스트: 외부 계정·실모델·ignored scripts 없이 실행되어야 한다.
 MCP 대역은 전송 경계만 대체하고 실제 compiled 그래프·검증·집계·재시도를 실행한다.
 """
+# 유지보수: StubMCP는 전송만 대체한다. 실제 compiled graph를 실행하므로 집계·출처 검증·실패 상태를 유지해야 한다.
 import asyncio
 from dataclasses import replace
 

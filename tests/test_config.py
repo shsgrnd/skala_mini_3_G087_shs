@@ -1,5 +1,6 @@
 """서비스 단위 테스트: 외부 계정·실모델·ignored scripts 없이 실행되어야 한다.
 """
+# 유지보수: 설정 확장 시 정상값뿐 아니라 시작 시 거부할 값도 추가한다. monkeypatch로 환경을 원복한다.
 import json
 import pytest
 
